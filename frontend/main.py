@@ -268,7 +268,7 @@ async def noticia_individual(request: Request, id_slug: str):
         img_html = f'<img src="{img_url}" alt="{titulo}" class="noticia-imagen" loading="lazy">' if img_url else '<div class="noticia-imagen-placeholder"><span>📰</span></div>'
         
         # Reemplazar placeholders en la plantilla de noticia
-        noticia_html = noticia_html.replace("<!-- NOTICIA_TITULO -->", titulo)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_TITULO -->", f"<h2 class=\"noticia-titulo\">{titulo}</h2>")
         noticia_html = noticia_html.replace("<!-- NOTICIA_TITULO_TEXTO -->", titulo)
         noticia_html = noticia_html.replace("<!-- NOTICIA_IMAGEN -->", img_html)
         noticia_html = noticia_html.replace("<!-- NOTICIA_CATEGORIAS -->", categorias_html)
