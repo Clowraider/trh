@@ -134,19 +134,17 @@ def correr():
                 print(f"  OK: {resumen[:80]}...")
 
             except Exception as e:
-               if "LIMITE_ALCANZADO" in str(e):
+                print(f"  error: {e}")
+                if "LIMITE_ALCANZADO" in str(e):
                     if modelo == MODELO_PRINCIPAL:
-                        # limite del gratuito, intenta con el pago
                         print("  Límite del modelo gratuito, cambiando al modelo de respaldo...")
                         continue
                     else:
-                        # limite del pago también, parar todo
                         print("  Límite alcanzado en ambos modelos. Parando.")
                         return
-            print(f"  error: {e}")
-            if intentos < MAX_REINTENTOS:
-                print(f"  esperando 10 segundos antes de reintentar...")
-                time.sleep(10)
+                if intentos < MAX_REINTENTOS:
+                    print(f"  esperando 10 segundos antes de reintentar...")
+                    time.sleep(10)
 
         if resumen:
             guardar_resumen(contenido_id, resumen)
