@@ -99,6 +99,8 @@ services:
     restart: always
     ports:
       - 8004:8000
+    volumes:
+    - ./logs:/root/docker/trh/logs
 ```
 
 Clic en **Deploy the stack**.

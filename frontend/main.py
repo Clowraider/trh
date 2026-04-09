@@ -6,13 +6,45 @@ import os
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 
-from config import API_KEY, API_BASE_URL, IMAGEN_BASE_URL, ADMIN_PASSWORD, ADMIN_COOKIE_NAME, ADMIN_COOKIE_DURATION_HOURS, SECRET_KEY
+from config import API_KEY, API_BASE_URL, IMAGEN_BASE_URL, ADMIN_PASSWORD, ADMIN_COOKIE_NAME, ADMIN_COOKIE_DURATION_HOURS, SECRET_KEY, ADMIN_MAX_ATTEMPTS, ADMIN_LOCKOUT_MINUTES, ADMIN_LOG_FILE
 
 app = FastAPI(title="TRH Noticias - Frontend")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+
+login_attempts: dict = {}
+
+
+def get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def log_failed_login(ip: str, password: str):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    log_entry = f"{timestamp} | IP: {ip} | Password: {password}\n"
+    try:
+        os.makedirs(os.path.dirname(ADMIN_LOG_FILE), exist_ok=True)
+        with open(ADMIN_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(log_entry)
+    except Exception:
+        pass
+
+
+def is_ip_blocked(ip: str) -> bool:
+    if ip not in login_attempts:
+        return False
+    attempts_data = login_attempts[ip]
+    if attempts_data["count"] >= ADMIN_MAX_ATTEMPTS:
+        locked_time = attempts_data["locked_at"]
+        if datetime.now() < locked_time + timedelta(minutes=ADMIN_LOCKOUT_MINUTES):
+            return True
+        del login_attempts[ip]
+    return False
 
 
 def render_template(filename, **context):
@@ -289,10 +321,9 @@ def admin_login(request: Request):
 
 @app.post("/admin03-verify", response_class=HTMLResponse)
 async def admin_verify(request: Request):
-    form = await request.form()
-    password = form.get("password")
-
-    if password != ADMIN_PASSWORD:
+    client_ip = get_client_ip(request)
+    
+    if is_ip_blocked(client_ip):
         path = os.path.join(BASE_DIR, "templates", "base.html")
         with open(path, "r", encoding="utf-8") as f:
             html = f.read()
@@ -300,11 +331,40 @@ async def admin_verify(request: Request):
         content = '''
 <div class="login-container">
     <h2>Panel de Administración</h2>
+    <p class="error">Demasiados intentos fallidos. Intenta de nuevo en 15 minutos.</p>
+</div>'''
+
+        html = html.replace("<!-- CONTENT -->", content)
+        html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Login Bloqueado</title>")
+
+        return HTMLResponse(html)
+    
+    form = await request.form()
+    password = form.get("password")
+
+    if password != ADMIN_PASSWORD:
+        log_failed_login(client_ip, password)
+        
+        if client_ip not in login_attempts:
+            login_attempts[client_ip] = {"count": 0, "locked_at": None}
+        login_attempts[client_ip]["count"] += 1
+        
+        if login_attempts[client_ip]["count"] >= ADMIN_MAX_ATTEMPTS:
+            login_attempts[client_ip]["locked_at"] = datetime.now()
+        
+        path = os.path.join(BASE_DIR, "templates", "base.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        remaining = ADMIN_MAX_ATTEMPTS - login_attempts[client_ip]["count"]
+        content = f'''
+<div class="login-container">
+    <h2>Panel de Administración</h2>
     <form method="POST" action="/admin03-verify">
         <input type="password" name="password" placeholder="Contraseña" required>
         <button type="submit" class="btn-login">Ingresar</button>
     </form>
-    <p class="error">Contraseña incorrecta</p>
+    <p class="error">Contraseña incorrecta. Intentos restantes: {remaining}</p>
 </div>'''
 
         html = html.replace("<!-- CONTENT -->", content)
@@ -312,6 +372,9 @@ async def admin_verify(request: Request):
 
         return HTMLResponse(html)
 
+    if client_ip in login_attempts:
+        del login_attempts[client_ip]
+    
     expires = datetime.now(timezone.utc) + timedelta(hours=ADMIN_COOKIE_DURATION_HOURS)
     token = jwt.encode({"admin": True, "exp": expires}, SECRET_KEY, algorithm="HS256")
 
