@@ -31,8 +31,9 @@ def log_failed_login(ip: str, password: str):
         os.makedirs(os.path.dirname(ADMIN_LOG_FILE), exist_ok=True)
         with open(ADMIN_LOG_FILE, "a", encoding="utf-8") as f:
             f.write(log_entry)
-    except Exception:
-        pass
+    except Exception as e:
+        import sys
+        print(f"[LOG ERROR] Failed to write login log: {e}", file=sys.stderr)
 
 
 def is_ip_blocked(ip: str) -> bool:

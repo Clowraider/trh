@@ -19,4 +19,4 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 
 ADMIN_MAX_ATTEMPTS = int(os.getenv("ADMIN_MAX_ATTEMPTS", "3"))
 ADMIN_LOCKOUT_MINUTES = int(os.getenv("ADMIN_LOCKOUT_MINUTES", "15"))
-ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "/root/docker/trh/logs/login_fallidos.log")
+ADMIN_LOG_FILE = os.getenv("ADMIN_LOG_FILE", "/app/logs/login_fallidos.log")
