@@ -182,41 +182,6 @@ def generar_meta_tags_noticia(noticia: dict, dominio: str, imagen_base_url: str)
             "@type": "NewsMediaOrganization",
             "name": fuente
         }
-    }
-    
-    if keywords:
-        schema_data["keywords"] = keywords
-    
-    return {
-        # Título de la página
-        "PAGE_TITLE": f"{titulo} - TRH Noticias",
-        
-        # Meta description
-        "META_DESCRIPTION": meta_desc,
-        
-        # Canonical URL
-        "CANONICAL_URL": url_noticia,
-        
-        # Open Graph
-        "OG_TITLE": titulo,
-        "OG_DESCRIPTION": og_desc,
-        "OG_IMAGE": og_image if og_image else f"https://{dominio}/static/images/og-default.jpg",
-        "OG_URL": url_noticia,
-        "OG_TYPE": "article",
-        
-        # Twitter Card
-        "TWITTER_TITLE": titulo,
-        "TWITTER_DESCRIPTION": og_desc,
-        "TWITTER_IMAGE": og_image if og_image else f"https://{dominio}/static/images/og-default.jpg",
-        
-        # Schema.org NewsArticle
-        "SCHEMA_JSON": json.dumps(schema_data, ensure_ascii=False)
-    }
-    }
-    
-    if keywords:
-        schema_data["keywords"] = keywords
-    
     return {
         # Título de la página
         "PAGE_TITLE": f"{titulo} - TRH Noticias",
