@@ -1,0 +1,338 @@
+from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, RedirectResponse
+import httpx
+import os
+from datetime import datetime, timedelta, timezone
+from jose import jwt, JWTError
+
+from config import API_KEY, API_BASE_URL, IMAGEN_BASE_URL, ADMIN_PASSWORD, ADMIN_COOKIE_NAME, ADMIN_COOKIE_DURATION_HOURS, SECRET_KEY
+
+app = FastAPI(title="TRH Noticias - Frontend")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+
+
+def render_template(filename, **context):
+    path = os.path.join(BASE_DIR, "templates", filename)
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    for key, value in context.items():
+        content = content.replace(f"{{{{ {key} }}}}", str(value))
+        content = content.replace(f"{{{{ {key}.id }}}}", str(value.get("id", "") if isinstance(value, dict) else ""))
+    
+    return content
+
+
+async def obtener_noticias(desde_id=None, limite=10):
+    url = f"{API_BASE_URL}/noticias"
+    params = {"limite": limite + 1}
+    if desde_id:
+        params["desde_id"] = desde_id
+    
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
+    img_url = ""
+    if noticia.get("imagen_url"):
+        img_path = noticia["imagen_url"]
+        if img_path.startswith("/imagenes/"):
+            img_path = img_path.replace("/imagenes/", "")
+        img_url = f"{api_base}/{img_path}"
+    
+    categorias_html = ""
+    if noticia.get("categorias"):
+        cats = "".join([f'<span class="categoria-tag">{cat}</span>' for cat in noticia["categorias"]])
+        categorias_html = f'<div class="noticias-categorias">{cats}</div>'
+    
+    resumen = noticia.get("resumen_ia", "")
+    fuente = noticia.get("fuente", "")
+    fecha = str(noticia.get("fecha", ""))[:10] if noticia.get("fecha") else ""
+    titulo = noticia.get("titulo", "")
+    link = noticia.get("link_original", "")
+    
+    img_html = f'<img src="{img_url}" alt="{titulo}" class="noticia-imagen" loading="lazy">' if img_url else '<div class="noticia-imagen-placeholder"><span>📰</span></div>'
+    
+    card = f'''
+<article class="noticia-card">
+    {img_html}
+    <div class="noticia-contenido">
+        <h2 class="noticia-titulo">
+            <a href="{link}" target="_blank" rel="noopener">{titulo}</a>
+        </h2>
+        {categorias_html}
+        <p class="noticia-resumen">{resumen}</p>
+        <div class="noticia-meta">
+            <span class="noticia-fuente">{fuente}</span>
+            <span class="noticia-fecha">{fecha}</span>
+        </div>
+    </div>
+</article>'''
+    
+    if hay_mas and next_cursor:
+        card += f'''
+<div class="sentinel" 
+     hx-get="/noticias-scroll?desde_id={next_cursor}" 
+     hx-trigger="reveal" 
+     hx-swap="beforeend"
+     hx-target="closest .sentinel"
+     style="display:none">
+</div>'''
+    
+    return card
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    try:
+        data = await obtener_noticias(limite=10)
+        noticias = data.get("noticias", [])
+        hay_mas = data.get("hay_mas", False)
+        next_cursor = data.get("siguiente_cursor")
+        
+        path = os.path.join(BASE_DIR, "templates", "base.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+        
+        path_index = os.path.join(BASE_DIR, "templates", "index.html")
+        with open(path_index, "r", encoding="utf-8") as f:
+            index_html = f.read()
+        
+        cards_html = "".join([format_noticia_card(n, IMAGEN_BASE_URL) for n in noticias])
+        
+        sentinel_html = ""
+        if hay_mas and next_cursor:
+            sentinel_html = f'''
+<div class="sentinel" 
+     hx-get="/noticias-scroll?desde_id={next_cursor}" 
+     hx-trigger="reveal" 
+     hx-swap="beforeend"
+     hx-target="closest .sentinel"
+     style="display:none">
+</div>'''
+        
+        content = index_html.replace("<!-- NOTICIAS -->", cards_html + sentinel_html)
+        html = html.replace("<!-- CONTENT -->", content)
+        
+        return HTMLResponse(html)
+    except Exception as e:
+        return HTMLResponse(f"<h1>Error: {e}</h1><p>Backend: {API_BASE_URL}</p>")
+
+
+@app.get("/noticias-scroll", response_class=HTMLResponse)
+async def noticias_scroll(request: Request, desde_id: int):
+    try:
+        data = await obtener_noticias(desde_id=desde_id, limite=10)
+        noticias = data.get("noticias", [])
+        hay_mas = data.get("hay_mas", False)
+        next_cursor = data.get("siguiente_cursor")
+        
+        html = "".join([format_noticia_card(n, IMAGEN_BASE_URL, next_cursor, hay_mas) for n in noticias])
+        return HTMLResponse(html)
+    except Exception:
+        return HTMLResponse("")
+
+
+@app.get("/contacto", response_class=HTMLResponse)
+def contacto(request: Request):
+    path = os.path.join(BASE_DIR, "templates", "base.html")
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+    
+    path_contacto = os.path.join(BASE_DIR, "templates", "contacto.html")
+    with open(path_contacto, "r", encoding="utf-8") as f:
+        contacto_html = f.read()
+    
+    html = html.replace("<!-- CONTENT -->", contacto_html)
+    html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Contacto</title>")
+    
+    return HTMLResponse(html)
+
+
+def verify_admin_session(request: Request) -> bool:
+    cookie_value = request.cookies.get(ADMIN_COOKIE_NAME)
+    if not cookie_value:
+        return False
+    try:
+        payload = jwt.decode(cookie_value, SECRET_KEY, algorithms=["HS256"])
+        return payload.get("admin") == True
+    except JWTError:
+        return False
+
+
+async def obtener_noticias_pendientes():
+    url = f"{API_BASE_URL}/admin/noticias-pendientes"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+async def accion_noticia(noticia_id: int, accion: str):
+    url = f"{API_BASE_URL}/admin/noticias/{noticia_id}/accion"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(url, params={"accion": accion}, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+@app.get("/admin03", response_class=HTMLResponse)
+async def admin(request: Request):
+    return await admin_get(request)
+
+
+async def admin_get(request: Request):
+    if not verify_admin_session(request):
+        return RedirectResponse(url="/admin03-login")
+    
+    try:
+        noticias = await obtener_noticias_pendientes()
+
+        path = os.path.join(BASE_DIR, "templates", "base.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        cantidad = len(noticias)
+        
+        if not noticias:
+            content = f'<div class="noticias-container"><p>No hay noticias pendientes.</p></div>'
+        else:
+            cards_html = ""
+            for n in noticias:
+                cards_html += f'''
+<article class="noticia-card">
+    <div class="admin-botones">
+        <form method="POST" action="/admin03/accion" style="display:inline;">
+            <input type="hidden" name="noticia_id" value="{n["id"]}">
+            <input type="hidden" name="accion" value="aprobar">
+            <button type="submit" class="btn-aprobar">Aprobar</button>
+        </form>
+        <form method="POST" action="/admin03/accion" style="display:inline;">
+            <input type="hidden" name="noticia_id" value="{n["id"]}">
+            <input type="hidden" name="accion" value="rechazar">
+            <button type="submit" class="btn-rechazar">Rechazar</button>
+        </form>
+    </div>
+    <h2 class="noticia-titulo">{n["titulo"]}</h2>
+    <div class="noticia-meta">
+        <span class="noticia-fuente">{n.get("fuente", "")}</span>
+    </div>
+    <a href="{n["link"]}" target="_blank" rel="noopener" class="noticia-link">Ver origen</a>
+</article>'''
+
+            content = f'''
+<div class="admin-header">
+    <h2>{cantidad} noticia{"s" if cantidad != 1 else ""} pendiente{"s" if cantidad != 1 else ""}</h2>
+    <div class="admin-header-buttons">
+        <a href="/admin03-logout" class="btn-cerrar">Cerrar sesión</a>
+        <a href="/" class="btn-volver">Volver al inicio</a>
+    </div>
+</div>
+<div class="noticias-container">{cards_html}</div>'''
+
+        html = html.replace("<!-- CONTENT -->", content)
+        html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Admin</title>")
+
+        return HTMLResponse(html)
+    except Exception as e:
+        return HTMLResponse(f"<h1>Error: {e}</h1>")
+
+
+@app.post("/admin03/accion", response_class=HTMLResponse)
+async def admin_accion(request: Request):
+    if not verify_admin_session(request):
+        return RedirectResponse(url="/admin03-login")
+    
+    form = await request.form()
+    noticia_id = int(form.get("noticia_id"))
+    accion = form.get("accion")
+
+    await accion_noticia(noticia_id, accion)
+
+    return await admin_get(request)
+
+
+@app.get("/admin03-login", response_class=HTMLResponse)
+def admin_login(request: Request):
+    if verify_admin_session(request):
+        return RedirectResponse(url="/admin03")
+    
+    path = os.path.join(BASE_DIR, "templates", "base.html")
+    with open(path, "r", encoding="utf-8") as f:
+        html = f.read()
+
+    content = '''
+<div class="login-container">
+    <h2>Panel de Administración</h2>
+    <form method="POST" action="/admin03-verify">
+        <input type="password" name="password" placeholder="Contraseña" required>
+        <button type="submit" class="btn-login">Ingresar</button>
+    </form>
+</div>'''
+
+    html = html.replace("<!-- CONTENT -->", content)
+    html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Login Admin</title>")
+
+    return HTMLResponse(html)
+
+
+@app.post("/admin03-verify", response_class=HTMLResponse)
+async def admin_verify(request: Request):
+    form = await request.form()
+    password = form.get("password")
+
+    if password != ADMIN_PASSWORD:
+        path = os.path.join(BASE_DIR, "templates", "base.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        content = '''
+<div class="login-container">
+    <h2>Panel de Administración</h2>
+    <form method="POST" action="/admin03-verify">
+        <input type="password" name="password" placeholder="Contraseña" required>
+        <button type="submit" class="btn-login">Ingresar</button>
+    </form>
+    <p class="error">Contraseña incorrecta</p>
+</div>'''
+
+        html = html.replace("<!-- CONTENT -->", content)
+        html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Login Admin</title>")
+
+        return HTMLResponse(html)
+
+    expires = datetime.now(timezone.utc) + timedelta(hours=ADMIN_COOKIE_DURATION_HOURS)
+    token = jwt.encode({"admin": True, "exp": expires}, SECRET_KEY, algorithm="HS256")
+
+    response = RedirectResponse(url="/admin03", status_code=303)
+    response.set_cookie(
+        key=ADMIN_COOKIE_NAME,
+        value=token,
+        expires=datetime.now(timezone.utc) + timedelta(hours=ADMIN_COOKIE_DURATION_HOURS),
+        httponly=True,
+        samesite="lax"
+    )
+    return response
+
+
+@app.get("/admin03-logout")
+def admin_logout():
+    response = RedirectResponse(url="/admin03-login")
+    response.delete_cookie(ADMIN_COOKIE_NAME)
+    return response
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
