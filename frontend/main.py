@@ -6,7 +6,8 @@ import os
 from datetime import datetime, timedelta, timezone
 from jose import jwt, JWTError
 
-from config import API_KEY, API_BASE_URL, IMAGEN_BASE_URL, ADMIN_PASSWORD, ADMIN_COOKIE_NAME, ADMIN_COOKIE_DURATION_HOURS, SECRET_KEY, ADMIN_MAX_ATTEMPTS, ADMIN_LOCKOUT_MINUTES, ADMIN_LOG_FILE
+from config import API_KEY, API_BASE_URL, IMAGEN_BASE_URL, ADMIN_PASSWORD, ADMIN_COOKIE_NAME, ADMIN_COOKIE_DURATION_HOURS, SECRET_KEY, ADMIN_MAX_ATTEMPTS, ADMIN_LOCKOUT_MINUTES, ADMIN_LOG_FILE, DOMINIO
+from utils import generar_meta_tags_home, generar_meta_tags_noticia, formatear_slug, inyectar_meta_tags
 
 app = FastAPI(title="TRH Noticias - Frontend")
 
@@ -91,7 +92,9 @@ def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
     fuente = noticia.get("fuente", "")
     fecha = str(noticia.get("fecha", ""))[:10] if noticia.get("fecha") else ""
     titulo = noticia.get("titulo", "")
-    link = noticia.get("link_original", "")
+    noticia_id = noticia.get("id", "")
+    slug = formatear_slug(titulo)
+    link_interno = f"/noticia/{noticia_id}-{slug}"
     
     img_html = f'<img src="{img_url}" alt="{titulo}" class="noticia-imagen" loading="lazy">' if img_url else '<div class="noticia-imagen-placeholder"><span>📰</span></div>'
     
@@ -100,7 +103,7 @@ def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
     {img_html}
     <div class="noticia-contenido">
         <h2 class="noticia-titulo">
-            <a href="{link}" target="_blank" rel="noopener">{titulo}</a>
+            <a href="{link_interno}">{titulo}</a>
         </h2>
         {categorias_html}
         <p class="noticia-resumen">{resumen}</p>
@@ -156,6 +159,10 @@ async def index(request: Request):
         content = index_html.replace("<!-- NOTICIAS -->", cards_html + sentinel_html)
         html = html.replace("<!-- CONTENT -->", content)
         
+        # Inyectar meta tags para homepage
+        meta_tags = generar_meta_tags_home(DOMINIO)
+        html = inyectar_meta_tags(html, meta_tags)
+        
         return HTMLResponse(html)
     except Exception as e:
         return HTMLResponse(f"<h1>Error: {e}</h1><p>Backend: {API_BASE_URL}</p>")
@@ -189,6 +196,102 @@ def contacto(request: Request):
     html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Contacto</title>")
     
     return HTMLResponse(html)
+
+
+async def obtener_noticia_por_id(noticia_id: int):
+    """Obtiene una noticia individual por su ID."""
+    url = f"{API_BASE_URL}/noticias/{noticia_id}"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+@app.get("/noticia/{id_slug}", response_class=HTMLResponse)
+async def noticia_individual(request: Request, id_slug: str):
+    """
+    Página individual de noticia: /noticia/{id}-{slug}
+    El ID se usa para buscar en la DB, el slug es solo decorativo para SEO.
+    """
+    # Extraer el ID del path - el ID es el primer grupo de dígitos al inicio
+    # Ejemplo: "123-nina-de-3-anos-atropellada" -> ID = 123
+    import re
+    match = re.match(r'^(\d+)', id_slug)
+    if not match:
+        return HTMLResponse("<h1>Noticia no encontrada</h1>", status_code=404)
+    
+    try:
+        noticia_id = int(match.group(1))
+    except ValueError:
+        return HTMLResponse("<h1>Noticia no encontrada</h1>", status_code=404)
+    
+    try:
+        # Obtener noticia del backend
+        noticia = await obtener_noticia_por_id(noticia_id)
+        
+        # Cargar plantilla base
+        path = os.path.join(BASE_DIR, "templates", "base.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+        
+        # Cargar plantilla de noticia individual
+        path_noticia = os.path.join(BASE_DIR, "templates", "noticia.html")
+        with open(path_noticia, "r", encoding="utf-8") as f:
+            noticia_html = f.read()
+        
+        # Preparar datos de la noticia
+        titulo = noticia.get("titulo", "")
+        categorias = noticia.get("categorias", [])
+        fuente = noticia.get("fuente", "")
+        fecha = str(noticia.get("fecha", ""))[:10] if noticia.get("fecha") else ""
+        resumen_ia = noticia.get("resumen_ia", "")
+        link_original = noticia.get("link_original", "")
+        
+        # Procesar imagen
+        img_url = ""
+        if noticia.get("imagen_url"):
+            img_path = noticia["imagen_url"]
+            if img_path.startswith("/imagenes/"):
+                img_path = img_path.replace("/imagenes/", "")
+            img_url = f"{IMAGEN_BASE_URL}/{img_path}"
+        
+        # Generar HTML de categorías
+        categorias_html = ""
+        if categorias:
+            cats = "".join([f'<span class="categoria-tag">{cat}</span>' for cat in categorias])
+            categorias_html = f'<div class="noticias-categorias">{cats}</div>'
+        
+        # Generar HTML de imagen
+        img_html = f'<img src="{img_url}" alt="{titulo}" class="noticia-imagen" loading="lazy">' if img_url else '<div class="noticia-imagen-placeholder"><span>📰</span></div>'
+        
+        # Reemplazar placeholders en la plantilla de noticia
+        noticia_html = noticia_html.replace("<!-- NOTICIA_TITULO -->", titulo)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_TITULO_TEXTO -->", titulo)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_IMAGEN -->", img_html)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_CATEGORIAS -->", categorias_html)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_FUENTE -->", fuente)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_FECHA -->", fecha)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_RESUMEN_IA -->", resumen_ia)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_LINK_ORIGINAL -->", link_original)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_FUENTE_LINK -->", fuente)
+        
+        # Insertar contenido en base.html
+        html = html.replace("<!-- CONTENT -->", noticia_html)
+        
+        # Generar e inyectar meta tags SEO
+        meta_tags = generar_meta_tags_noticia(noticia, DOMINIO, IMAGEN_BASE_URL)
+        html = inyectar_meta_tags(html, meta_tags)
+        
+        return HTMLResponse(html)
+        
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return HTMLResponse("<h1>Noticia no encontrada</h1>", status_code=404)
+        return HTMLResponse(f"<h1>Error: {e}</h1>", status_code=500)
+    except Exception as e:
+        return HTMLResponse(f"<h1>Error al cargar la noticia: {e}</h1>", status_code=500)
 
 
 def verify_admin_session(request: Request) -> bool:

@@ -100,7 +100,7 @@ services:
     ports:
       - 8004:8000
     volumes:
-    - ./logs:/root/docker/trh/logs
+    - /root/docker/trh/logs:/app/logs
 ```
 
 Clic en **Deploy the stack**.
