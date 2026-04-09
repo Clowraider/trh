@@ -182,6 +182,11 @@ def generar_meta_tags_noticia(noticia: dict, dominio: str, imagen_base_url: str)
             "@type": "NewsMediaOrganization",
             "name": fuente
         }
+    }
+    
+    if keywords:
+        schema_data["keywords"] = keywords
+    
     return {
         # Título de la página
         "PAGE_TITLE": f"{titulo} - TRH Noticias",
