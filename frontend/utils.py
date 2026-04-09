@@ -119,6 +119,7 @@ def generar_meta_tags_noticia(noticia: dict, dominio: str, imagen_base_url: str)
         Diccionario con todos los meta tags y placeholders para base.html
     """
     titulo = noticia.get("titulo", "")
+    resumen = noticia.get("resumen", "")
     resumen_ia = noticia.get("resumen_ia", "")
     categorias = noticia.get("categorias", [])
     fuente = noticia.get("fuente", "")
@@ -142,13 +143,24 @@ def generar_meta_tags_noticia(noticia: dict, dominio: str, imagen_base_url: str)
     # Unir categorías como keywords
     keywords = ", ".join(categorias) if categorias else ""
     
-    # Limitar descripción para meta tags (150-160 caracteres)
+    # Combinar resumen y resumen_ia para articleBody
+    article_body = ""
+    if resumen_ia:
+        article_body = resumen_ia
+    elif resumen:
+        article_body = resumen
+    
+    # Limitar descripción para meta tags (150-160 caracteres optimal)
     meta_desc = resumen_ia[:157] + "..." if len(resumen_ia) > 157 else resumen_ia
+    if not meta_desc:
+        meta_desc = resumen[:157] + "..." if len(resumen) > 157 else resumen
     if not meta_desc:
         meta_desc = f"Noticia de {fuente}"
     
     # Limitar og:description (200 caracteres máximo)
     og_desc = resumen_ia[:197] + "..." if len(resumen_ia) > 197 else resumen_ia
+    if not og_desc:
+        og_desc = resumen[:197] + "..." if len(resumen) > 197 else resumen
     if not og_desc:
         og_desc = f"Leer más en TRH Noticias - {titulo}"
     
@@ -163,13 +175,43 @@ def generar_meta_tags_noticia(noticia: dict, dominio: str, imagen_base_url: str)
         "@context": "https://schema.org",
         "@type": "NewsArticle",
         "headline": titulo,
-        "articleBody": resumen_ia,
+        "articleBody": article_body,
         "image": og_image if og_image else None,
         "datePublished": fecha_iso,
         "sourceOrganization": {
             "@type": "NewsMediaOrganization",
             "name": fuente
         }
+    }
+    
+    if keywords:
+        schema_data["keywords"] = keywords
+    
+    return {
+        # Título de la página
+        "PAGE_TITLE": f"{titulo} - TRH Noticias",
+        
+        # Meta description
+        "META_DESCRIPTION": meta_desc,
+        
+        # Canonical URL
+        "CANONICAL_URL": url_noticia,
+        
+        # Open Graph
+        "OG_TITLE": titulo,
+        "OG_DESCRIPTION": og_desc,
+        "OG_IMAGE": og_image if og_image else f"https://{dominio}/static/images/og-default.jpg",
+        "OG_URL": url_noticia,
+        "OG_TYPE": "article",
+        
+        # Twitter Card
+        "TWITTER_TITLE": titulo,
+        "TWITTER_DESCRIPTION": og_desc,
+        "TWITTER_IMAGE": og_image if og_image else f"https://{dominio}/static/images/og-default.jpg",
+        
+        # Schema.org NewsArticle
+        "SCHEMA_JSON": json.dumps(schema_data, ensure_ascii=False)
+    }
     }
     
     if keywords:

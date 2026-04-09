@@ -10,6 +10,7 @@ class Noticia(BaseModel):
     link_original: str
     fecha: Optional[datetime]
     imagen_url: Optional[str]
+    resumen: Optional[str]
     resumen_ia: Optional[str]
     categorias: List[str]
 

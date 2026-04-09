@@ -246,6 +246,7 @@ async def noticia_individual(request: Request, id_slug: str):
         categorias = noticia.get("categorias", [])
         fuente = noticia.get("fuente", "")
         fecha = str(noticia.get("fecha", ""))[:10] if noticia.get("fecha") else ""
+        resumen = noticia.get("resumen", "")
         resumen_ia = noticia.get("resumen_ia", "")
         link_original = noticia.get("link_original", "")
         
@@ -273,7 +274,8 @@ async def noticia_individual(request: Request, id_slug: str):
         noticia_html = noticia_html.replace("<!-- NOTICIA_CATEGORIAS -->", categorias_html)
         noticia_html = noticia_html.replace("<!-- NOTICIA_FUENTE -->", fuente)
         noticia_html = noticia_html.replace("<!-- NOTICIA_FECHA -->", fecha)
-        noticia_html = noticia_html.replace("<!-- NOTICIA_RESUMEN_IA -->", resumen_ia)
+        noticia_html = noticia_html.replace("<!-- NOTICIA_RESUMEN_IA -->", f"<p>{resumen_ia}</p>" if resumen_ia else "")
+        noticia_html = noticia_html.replace("<!-- NOTICIA_RESUMEN -->", f"<p>{resumen}</p>" if resumen else "")
         noticia_html = noticia_html.replace("<!-- NOTICIA_LINK_ORIGINAL -->", link_original)
         noticia_html = noticia_html.replace("<!-- NOTICIA_FUENTE_LINK -->", fuente)
         

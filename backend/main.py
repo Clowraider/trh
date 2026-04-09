@@ -50,7 +50,7 @@ def obtener_noticias(
         cur.execute("""
             SELECT n.id, n.titulo, n.fuente, n.link as link_original,
                    n.fecha_publicacion as fecha,
-                   c.imagen_url, c.resumen_ia
+                   c.imagen_url, c.resumen, c.resumen_ia
             FROM noticias n
             JOIN contenido c ON c.noticia_id = n.id
             WHERE n.estado = 'completo'
@@ -64,7 +64,7 @@ def obtener_noticias(
         cur.execute("""
             SELECT n.id, n.titulo, n.fuente, n.link as link_original,
                    n.fecha_publicacion as fecha,
-                   c.imagen_url, c.resumen_ia
+                   c.imagen_url, c.resumen, c.resumen_ia
             FROM noticias n
             JOIN contenido c ON c.noticia_id = n.id
             WHERE n.estado = 'completo'
@@ -98,6 +98,7 @@ def obtener_noticias(
             link_original=fila["link_original"],
             fecha=fila["fecha"],
             imagen_url=f"/imagenes/{fila['imagen_url']}" if fila["imagen_url"] else None,
+            resumen=fila["resumen"],
             resumen_ia=fila["resumen_ia"],
             categorias=categorias
         ))
@@ -126,7 +127,7 @@ def obtener_noticia(
     cur.execute("""
         SELECT n.id, n.titulo, n.fuente, n.link as link_original,
                n.fecha_publicacion as fecha,
-               c.imagen_url, c.resumen_ia
+               c.imagen_url, c.resumen, c.resumen_ia
         FROM noticias n
         JOIN contenido c ON c.noticia_id = n.id
         WHERE n.id = %s
@@ -154,6 +155,7 @@ def obtener_noticia(
         link_original=fila["link_original"],
         fecha=fila["fecha"],
         imagen_url=f"/imagenes/{fila['imagen_url']}" if fila["imagen_url"] else None,
+        resumen=fila["resumen"],
         resumen_ia=fila["resumen_ia"],
         categorias=categorias
     )
