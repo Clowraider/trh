@@ -9,7 +9,7 @@ from config import HEADERS
 
 # modelos en orden de prioridad
 # modelo primario gratis
-MODELO_PRINCIPAL = "qwen/qwen3.6-plus:free"
+MODELO_PRINCIPAL = "google/gemma-4-26b-a4b-it:free"
 
 # modelo secundario Pago y barato, para no parar la pagina
 MODELO_RESPALDO  = "deepseek/deepseek-v3.2"

@@ -1,34 +1,47 @@
 import os
 import requests
-import hashlib
+import re
+from unicodedata import normalize
 from config import HEADERS
 
-# carpeta donde se guardan las imagenes
-# dentro del contenedor Docker el volumen esta montado en /app
-# que corresponde a /root/docker/trh/codigo en el servidor
-# las imagenes las guardamos fuera del codigo, en /root/docker/trh/imagenes
 CARPETA_IMAGENES = os.getenv("CARPETA_IMAGENES", "/root/docker/trh/imagenes")
 
+MAPA_ACENTOS = {
+    'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u',
+    'à': 'a', 'è': 'e', 'ì': 'i', 'ò': 'o', 'ù': 'u',
+    'ä': 'a', 'ë': 'e', 'ï': 'i', 'ö': 'o', 'ü': 'u',
+    'Á': 'a', 'É': 'e', 'Í': 'i', 'Ó': 'o', 'Ú': 'u',
+    'À': 'a', 'È': 'e', 'Ì': 'i', 'Ò': 'o', 'Ù': 'u',
+    'Ä': 'a', 'Ë': 'e', 'Ï': 'i', 'Ö': 'o', 'Ü': 'u',
+    'ñ': 'n', 'Ñ': 'n'
+}
 
-def descargar_imagen(url):
-    # si no hay url devuelve vacio
+def _limpiar_titulo(titulo):
+    texto = titulo.strip()
+    for accented, plain in MAPA_ACENTOS.items():
+        texto = texto.replace(accented, plain)
+    texto = re.sub(r'[^a-z0-9\s-]', '', texto.lower())
+    texto = re.sub(r'[\s]+', '-', texto)
+    return texto[:40]
+
+
+def descargar_imagen(url, titulo):
     if not url:
         return ""
 
     try:
-        # crea la carpeta si no existe
         os.makedirs(CARPETA_IMAGENES, exist_ok=True)
 
-        # genera un nombre unico basado en la url
-        # asi si la misma imagen se pide dos veces no se descarga dos veces
-        nombre = hashlib.md5(url.encode()).hexdigest() + "." + url.split(".")[-1].split("?")[0]
+        nombre_base = _limpiar_titulo(titulo)
+        ext = url.split(".")[-1].split("?")[0]
+        if ext.lower() not in ('jpg', 'jpeg', 'png', 'gif', 'webp'):
+            ext = "jpg"
+        nombre = f"{nombre_base}.{ext}"
         ruta_completa = os.path.join(CARPETA_IMAGENES, nombre)
 
-        # si ya existe no la vuelve a bajar
         if os.path.exists(ruta_completa):
             return nombre
 
-        # descarga la imagen
         respuesta = requests.get(url, headers=HEADERS, timeout=10)
         if respuesta.status_code == 200:
             with open(ruta_completa, "wb") as f:

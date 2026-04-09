@@ -17,7 +17,7 @@ def obtener_links_pendientes():
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
-        SELECT id, link FROM noticias
+        SELECT id, link, titulo FROM noticias
         WHERE fuente = %s
         AND estado = 'aprobado'
         AND id NOT IN (SELECT noticia_id FROM contenido)
@@ -112,12 +112,12 @@ def correr():
         print("No hay noticias aprobadas.")
         return
 
-    for noticia_id, link in noticias:
+    for noticia_id, link, titulo in noticias:
         print(f"\nProcesando: {link[:60]}")
         try:
             respuesta = requests.get(link, headers=HEADERS, timeout=10)
             resumen, imagen_url, texto, categorias = extraer_contenido(respuesta.text)
-            nombre_imagen = descargar_imagen(imagen_url)
+            nombre_imagen = descargar_imagen(imagen_url, titulo)
             guardar_contenido(noticia_id, resumen, nombre_imagen, texto, categorias)
         except Exception as e:
             print(f"  error al descargar: {e}")
