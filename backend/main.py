@@ -47,20 +47,24 @@ def obtener_noticias(
     # Determinar si hay filtro por categoría
     tiene_categoria = categoria and categoria.strip()
     
-    # Base de la consulta
+    # Base de la consulta - sin joins a tablas de categorías
     base_from = """
         FROM noticias n
         JOIN contenido c ON c.noticia_id = n.id
-        JOIN noticias_categorias nc ON nc.noticia_id = n.id
-        JOIN categorias cat ON cat.id = nc.categoria_id
         WHERE n.estado = 'completo'
         AND c.resumen_ia IS NOT NULL
         AND c.resumen_ia != ''
     """
     
-    # Agregar filtro de categoría si corresponde
+    # Agregar filtro de categoría si corresponde usando EXISTS
     if tiene_categoria:
-        base_from += " AND LOWER(cat.nombre) = LOWER(%s)"
+        base_from += """
+        AND EXISTS (
+            SELECT 1 FROM noticias_categorias nc
+            JOIN categorias cat ON cat.id = nc.categoria_id
+            WHERE nc.noticia_id = n.id 
+            AND LOWER(cat.nombre) = LOWER(%s)
+        )"""
     
     # Paginación por cursor
     if desde_id:

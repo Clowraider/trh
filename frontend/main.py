@@ -146,7 +146,7 @@ async def index(request: Request):
             # Agregar atributos HTMX al último card
             cards_html = cards_html + f'''
 <div hx-get="/noticias-scroll?desde_id={next_cursor}" 
-     hx-trigger="revealed" 
+     hx-trigger="revealed once" 
      hx-swap="afterend"
      class="sentinel-loader"
      style="height:1px;">
@@ -183,7 +183,7 @@ async def noticias_scroll(request: Request, desde_id: int, categoria: str = None
         if hay_mas and next_cursor and cards_html:
             cards_html = cards_html + f'''
 <div hx-get="{sentinel_url}" 
-     hx-trigger="revealed" 
+     hx-trigger="revealed once" 
      hx-swap="afterend"
      class="sentinel-loader"
      style="height:1px;">
@@ -240,7 +240,7 @@ async def categoria(request: Request, nombre_categoria: str):
             sentinel_url = f"/noticias-scroll?desde_id={next_cursor}&categoria={nombre_categoria}"
             cards_html = cards_html + f'''
 <div hx-get="{sentinel_url}" 
-     hx-trigger="revealed" 
+     hx-trigger="revealed once" 
      hx-swap="afterend"
      class="sentinel-loader"
      style="height:1px;">
