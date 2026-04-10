@@ -9,7 +9,23 @@ from jose import jwt, JWTError
 from config import API_KEY, API_BASE_URL, IMAGEN_BASE_URL, ADMIN_PASSWORD, ADMIN_COOKIE_NAME, ADMIN_COOKIE_DURATION_HOURS, SECRET_KEY, ADMIN_MAX_ATTEMPTS, ADMIN_LOCKOUT_MINUTES, ADMIN_LOG_FILE, DOMINIO
 from utils import generar_meta_tags_home, generar_meta_tags_noticia, formatear_slug, inyectar_meta_tags
 
-app = FastAPI(title="TRH Noticias - Frontend")
+# Lifespan handler para FastAPI 2026+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Cargar categorías al iniciar."""
+    global categorias_cache
+    try:
+        categorias = await obtener_categorias()
+        categorias_cache = {cat["nombre"]: cat["id"] for cat in categorias}
+    except Exception as e:
+        print(f"[STARTUP] Error cargando categorías: {e}")
+    yield
+
+
+app = FastAPI(title="TRH Noticias - Frontend", lifespan=lifespan)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -79,21 +95,6 @@ async def obtener_noticias(desde_id=None, limite=10, categoria=None, categoria_i
         return response.json()
 
 
-# Cache para mapa de categorías (nombre -> id)
-categorias_cache = {}
-
-
-@app.on_event("startup")
-async def startup():
-    """Cargar categorías al iniciar."""
-    global categorias_cache
-    try:
-        categorias = await obtener_categorias()
-        categorias_cache = {cat["nombre"]: cat["id"] for cat in categorias}
-    except Exception as e:
-        print(f"[STARTUP] Error cargando categorías: {e}")
-
-
 async def obtener_categorias():
     """Obtiene todas las categorías del backend."""
     global categorias_cache
@@ -111,11 +112,39 @@ async def obtener_categorias():
 
 def get_categoria_link(nombre_cat):
     """Genera enlace de categoría con formato /categoria/{id}-{slug}."""
+    import httpx
+    
+    # Si tenemos el ID en cache, usarlo
     if nombre_cat in categorias_cache:
         cat_id = categorias_cache[nombre_cat]
         slug = formatear_slug(nombre_cat)
         return f"/categoria/{cat_id}-{slug}"
-    # Fallback si no hay cache
+    
+    # Si no hay cache, intentar obtener del backend directamente
+    if not categorias_cache:
+        try:
+            url = f"{API_BASE_URL}/categorias"
+            headers = {"Authorization": f"Bearer {API_KEY}"}
+            response = httpx.get(url, headers=headers, timeout=5.0)
+            if response.status_code == 200:
+                cats = response.json()
+                categorias_cache = {c["nombre"]: c["id"] for c in cats}
+        except:
+            pass
+    
+    # Intentar nuevamente después de cargar
+    if nombre_cat in categorias_cache:
+        cat_id = categorias_cache[nombre_cat]
+        slug = formatear_slug(nombre_cat)
+        return f"/categoria/{cat_id}-{slug}"
+    
+    # Fallback: intentar parsear el ID desde el nombre (formato "1-nombre")
+    parts = nombre_cat.split("-", 1)
+    if parts[0].isdigit():
+        slug = formatear_slug(parts[1]) if len(parts) > 1 else formatear_slug(nombre_cat)
+        return f"/categoria/{parts[0]}-{slug}"
+    
+    # Último fallback sin ID
     slug = formatear_slug(nombre_cat)
     return f"/categoria/{slug}"
 
