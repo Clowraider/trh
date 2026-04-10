@@ -34,11 +34,26 @@ def verificar_api_key(api_key: str = Depends(api_key_header)):
     return key
 
 
+@app.get("/categorias")
+def obtener_categorias(
+    _: str = Depends(verificar_api_key)
+):
+    """Devuelve todas las categorías disponibles."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT id, nombre FROM categorias ORDER BY nombre")
+    categorias = [{"id": r["id"], "nombre": r["nombre"]} for r in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return categorias
+
+
 @app.get("/noticias", response_model=RespuestaNoticias)
 def obtener_noticias(
     limite: int = Query(default=10, le=50),
     desde_id: int = Query(default=None),
     categoria: str = Query(default=None),
+    categoria_id: int = Query(default=None),
     _: str = Depends(verificar_api_key)
 ):
     conn = get_connection()
@@ -66,6 +81,10 @@ def obtener_noticias(
             AND LOWER(cat.nombre) = LOWER(%s)
         )"""
     
+    # Filtro por categoria_id
+    if categoria_id:
+        base_from += " AND EXISTS (SELECT 1 FROM noticias_categorias nc WHERE nc.noticia_id = n.id AND nc.categoria_id = %s)"
+    
     # Paginación por cursor
     if desde_id:
         if tiene_categoria:
@@ -78,6 +97,16 @@ def obtener_noticias(
                 ORDER BY n.id DESC
                 LIMIT %s
             """, (categoria.strip(), desde_id, limite + 1))
+        elif categoria_id:
+            cur.execute(f"""
+                SELECT n.id, n.titulo, n.fuente, n.link as link_original,
+                       n.fecha_publicacion as fecha,
+                       c.imagen_url, c.resumen, c.resumen_ia
+                {base_from}
+                AND n.id < %s
+                ORDER BY n.id DESC
+                LIMIT %s
+            """, (categoria_id, desde_id, limite + 1))
         else:
             cur.execute(f"""
                 SELECT n.id, n.titulo, n.fuente, n.link as link_original,
@@ -98,6 +127,15 @@ def obtener_noticias(
                 ORDER BY n.id DESC
                 LIMIT %s
             """, (categoria.strip(), limite + 1))
+        elif categoria_id:
+            cur.execute(f"""
+                SELECT n.id, n.titulo, n.fuente, n.link as link_original,
+                       n.fecha_publicacion as fecha,
+                       c.imagen_url, c.resumen, c.resumen_ia
+                {base_from}
+                ORDER BY n.id DESC
+                LIMIT %s
+            """, (categoria_id, limite + 1))
         else:
             cur.execute(f"""
                 SELECT n.id, n.titulo, n.fuente, n.link as link_original,

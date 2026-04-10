@@ -61,13 +61,15 @@ def render_template(filename, **context):
     return content
 
 
-async def obtener_noticias(desde_id=None, limite=10, categoria=None):
+async def obtener_noticias(desde_id=None, limite=10, categoria=None, categoria_id=None):
     url = f"{API_BASE_URL}/noticias"
     params = {"limite": limite + 1}
     if desde_id:
         params["desde_id"] = desde_id
     if categoria:
         params["categoria"] = categoria
+    if categoria_id:
+        params["categoria_id"] = categoria_id
     
     headers = {"Authorization": f"Bearer {API_KEY}"}
     
@@ -75,6 +77,47 @@ async def obtener_noticias(desde_id=None, limite=10, categoria=None):
         response = await client.get(url, params=params, headers=headers)
         response.raise_for_status()
         return response.json()
+
+
+# Cache para mapa de categorías (nombre -> id)
+categorias_cache = {}
+
+
+@app.on_event("startup")
+async def startup():
+    """Cargar categorías al iniciar."""
+    global categorias_cache
+    try:
+        categorias = await obtener_categorias()
+        categorias_cache = {cat["nombre"]: cat["id"] for cat in categorias}
+    except Exception as e:
+        print(f"[STARTUP] Error cargando categorías: {e}")
+
+
+async def obtener_categorias():
+    """Obtiene todas las categorías del backend."""
+    global categorias_cache
+    url = f"{API_BASE_URL}/categorias"
+    headers = {"Authorization": f"Bearer {API_KEY}"}
+    
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        categorias = response.json()
+        # Crear mapa: nombre -> id e id -> nombre
+        categorias_cache = {cat["nombre"]: cat["id"] for cat in categorias}
+        return categorias
+
+
+def get_categoria_link(nombre_cat):
+    """Genera enlace de categoría con formato /categoria/{id}-{slug}."""
+    if nombre_cat in categorias_cache:
+        cat_id = categorias_cache[nombre_cat]
+        slug = formatear_slug(nombre_cat)
+        return f"/categoria/{cat_id}-{slug}"
+    # Fallback si no hay cache
+    slug = formatear_slug(nombre_cat)
+    return f"/categoria/{slug}"
 
 
 def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
@@ -90,8 +133,7 @@ def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
     if noticia.get("categorias"):
         cats_links = []
         for cat in noticia["categorias"]:
-            slug_cat = formatear_slug(cat)
-            cats_links.append(f'<a href="/categoria/{slug_cat}" class="categoria-tag">{cat}</a>')
+            cats_links.append(f'<a href="{get_categoria_link(cat)}" class="categoria-tag">{cat}</a>')
         categorias_html = f'<div class="noticias-categorias">{"".join(cats_links)}</div>'
     
     resumen = noticia.get("resumen_ia", "")
@@ -165,9 +207,9 @@ async def index(request: Request):
 
 
 @app.get("/noticias-scroll", response_class=HTMLResponse)
-async def noticias_scroll(request: Request, desde_id: int, categoria: str = None):
+async def noticias_scroll(request: Request, desde_id: int, categoria: str = None, categoria_id: int = None):
     try:
-        data = await obtener_noticias(desde_id=desde_id, limite=10, categoria=categoria)
+        data = await obtener_noticias(desde_id=desde_id, limite=10, categoria=categoria, categoria_id=categoria_id)
         noticias = data.get("noticias", [])
         hay_mas = data.get("hay_mas", False)
         next_cursor = data.get("siguiente_cursor")
@@ -179,6 +221,8 @@ async def noticias_scroll(request: Request, desde_id: int, categoria: str = None
         sentinel_url = f"/noticias-scroll?desde_id={next_cursor}"
         if categoria:
             sentinel_url += f"&categoria={categoria}"
+        if categoria_id:
+            sentinel_url += f"&categoria_id={categoria_id}"
         
         if hay_mas and next_cursor and cards_html:
             cards_html = cards_html + f'''
@@ -210,18 +254,30 @@ def contacto(request: Request):
     return HTMLResponse(html)
 
 
-@app.get("/categoria/{nombre_categoria}", response_class=HTMLResponse)
-async def categoria(request: Request, nombre_categoria: str):
+@app.get("/categoria/{id_slug}", response_class=HTMLResponse)
+async def categoria(request: Request, id_slug: str):
     """
     Página de categoría: muestra noticias filtradas por categoría.
-    URL: /categoria/policiales, /categoria/deportes, etc.
+    URL: /categoria/1-policiales, /categoria/1-la-mas-visto, etc.
     """
+    import re
+    match = re.match(r'^(\d+)-', id_slug)
+    if not match:
+        return HTMLResponse("<h1>Categoría no encontrada</h1>", status_code=404)
+    
+    categoria_id = int(match.group(1))
+    
     try:
-        # Obtener noticias de esa categoría
-        data = await obtener_noticias(limite=10, categoria=nombre_categoria)
+        # Obtener noticias de esa categoría por ID
+        data = await obtener_noticias(limite=10, categoria_id=categoria_id)
         noticias = data.get("noticias", [])
         hay_mas = data.get("hay_mas", False)
         next_cursor = data.get("siguiente_cursor")
+        
+        # Obtener nombre de la categoría desde las noticias
+        nombre_categoria = ""
+        if noticias and noticias[0].get("categorias"):
+            nombre_categoria = noticias[0]["categorias"][0]
         
         # Cargar plantillas
         path = os.path.join(BASE_DIR, "templates", "base.html")
@@ -232,12 +288,12 @@ async def categoria(request: Request, nombre_categoria: str):
         with open(path_categoria, "r", encoding="utf-8") as f:
             categoria_html = f.read()
         
-        # Generar cards
+        # Generar cards con nuevo formato de enlaces
         cards_html = "".join([format_noticia_card(n, IMAGEN_BASE_URL) for n in noticias])
         
         # Agregar sentinel al final si hay más noticias
+        sentinel_url = f"/noticias-scroll?desde_id={next_cursor}&categoria={categoria_id}"
         if hay_mas and next_cursor and cards_html:
-            sentinel_url = f"/noticias-scroll?desde_id={next_cursor}&categoria={nombre_categoria}"
             cards_html = cards_html + f'''
 <div hx-get="{sentinel_url}" 
      hx-trigger="revealed once" 
@@ -251,7 +307,7 @@ async def categoria(request: Request, nombre_categoria: str):
         html = html.replace("<!-- CONTENT -->", categoria_html)
         
         # Título de la página
-        titulo_pagina = f"Noticias de {nombre_categoria.capitalize()} - TRH Noticias"
+        titulo_pagina = f"Noticias de {nombre_categoria} - TRH Noticias" if nombre_categoria else "Noticias - TRH Noticias"
         html = html.replace("{{ PAGE_TITLE }}", titulo_pagina)
         
         # Meta tags para SEO de categoría
