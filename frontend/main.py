@@ -61,11 +61,13 @@ def render_template(filename, **context):
     return content
 
 
-async def obtener_noticias(desde_id=None, limite=10):
+async def obtener_noticias(desde_id=None, limite=10, categoria=None):
     url = f"{API_BASE_URL}/noticias"
     params = {"limite": limite + 1}
     if desde_id:
         params["desde_id"] = desde_id
+    if categoria:
+        params["categoria"] = categoria
     
     headers = {"Authorization": f"Bearer {API_KEY}"}
     
@@ -83,10 +85,14 @@ def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
             img_path = img_path.replace("/imagenes/", "")
         img_url = f"{api_base}/{img_path}"
     
+    # Categorías como hipervínculos
     categorias_html = ""
     if noticia.get("categorias"):
-        cats = "".join([f'<span class="categoria-tag">{cat}</span>' for cat in noticia["categorias"]])
-        categorias_html = f'<div class="noticias-categorias">{cats}</div>'
+        cats_links = []
+        for cat in noticia["categorias"]:
+            slug_cat = formatear_slug(cat)
+            cats_links.append(f'<a href="/categoria/{slug_cat}" class="categoria-tag">{cat}</a>')
+        categorias_html = f'<div class="noticias-categorias">{"".join(cats_links)}</div>'
     
     resumen = noticia.get("resumen_ia", "")
     fuente = noticia.get("fuente", "")
@@ -159,9 +165,9 @@ async def index(request: Request):
 
 
 @app.get("/noticias-scroll", response_class=HTMLResponse)
-async def noticias_scroll(request: Request, desde_id: int):
+async def noticias_scroll(request: Request, desde_id: int, categoria: str = None):
     try:
-        data = await obtener_noticias(desde_id=desde_id, limite=10)
+        data = await obtener_noticias(desde_id=desde_id, limite=10, categoria=categoria)
         noticias = data.get("noticias", [])
         hay_mas = data.get("hay_mas", False)
         next_cursor = data.get("siguiente_cursor")
@@ -169,9 +175,14 @@ async def noticias_scroll(request: Request, desde_id: int):
         cards_html = "".join([format_noticia_card(n, IMAGEN_BASE_URL) for n in noticias])
         
         # Agregar sentinel al final si hay más noticias
+        # Incluir la categoría en la URL del sentinel si aplica
+        sentinel_url = f"/noticias-scroll?desde_id={next_cursor}"
+        if categoria:
+            sentinel_url += f"&categoria={categoria}"
+        
         if hay_mas and next_cursor and cards_html:
             cards_html = cards_html + f'''
-<div hx-get="/noticias-scroll?desde_id={next_cursor}" 
+<div hx-get="{sentinel_url}" 
      hx-trigger="revealed" 
      hx-swap="afterend"
      class="sentinel-loader"
@@ -197,6 +208,72 @@ def contacto(request: Request):
     html = html.replace("<title>TRH Noticias</title>", "<title>TRH Noticias - Contacto</title>")
     
     return HTMLResponse(html)
+
+
+@app.get("/categoria/{nombre_categoria}", response_class=HTMLResponse)
+async def categoria(request: Request, nombre_categoria: str):
+    """
+    Página de categoría: muestra noticias filtradas por categoría.
+    URL: /categoria/policiales, /categoria/deportes, etc.
+    """
+    try:
+        # Obtener noticias de esa categoría
+        data = await obtener_noticias(limite=10, categoria=nombre_categoria)
+        noticias = data.get("noticias", [])
+        hay_mas = data.get("hay_mas", False)
+        next_cursor = data.get("siguiente_cursor")
+        
+        # Cargar plantillas
+        path = os.path.join(BASE_DIR, "templates", "base.html")
+        with open(path, "r", encoding="utf-8") as f:
+            html = f.read()
+        
+        path_categoria = os.path.join(BASE_DIR, "templates", "categoria.html")
+        with open(path_categoria, "r", encoding="utf-8") as f:
+            categoria_html = f.read()
+        
+        # Generar cards
+        cards_html = "".join([format_noticia_card(n, IMAGEN_BASE_URL) for n in noticias])
+        
+        # Agregar sentinel al final si hay más noticias
+        if hay_mas and next_cursor and cards_html:
+            sentinel_url = f"/noticias-scroll?desde_id={next_cursor}&categoria={nombre_categoria}"
+            cards_html = cards_html + f'''
+<div hx-get="{sentinel_url}" 
+     hx-trigger="revealed" 
+     hx-swap="afterend"
+     class="sentinel-loader"
+     style="height:1px;">
+</div>'''
+        
+        # Reemplazar contenido
+        categoria_html = categoria_html.replace("<!-- NOTICIAS_CATEGORIA -->", cards_html)
+        html = html.replace("<!-- CONTENT -->", categoria_html)
+        
+        # Título de la página
+        titulo_pagina = f"Noticias de {nombre_categoria.capitalize()} - TRH Noticias"
+        html = html.replace("{{ PAGE_TITLE }}", titulo_pagina)
+        
+        # Meta tags para SEO de categoría
+        meta_tags = {
+            "PAGE_TITLE": titulo_pagina,
+            "META_DESCRIPTION": f"Últimas noticias de {nombre_categoria.capitalize()} en TRH Noticias. Stay informed with the latest {nombre_categoria} news.",
+            "CANONICAL_URL": f"https://{DOMINIO}/categoria/{nombre_categoria}",
+            "OG_TITLE": titulo_pagina,
+            "OG_DESCRIPTION": f"Noticias de {nombre_categoria.capitalize()}",
+            "OG_IMAGE": f"https://{DOMINIO}/static/images/og-default.jpg",
+            "OG_URL": f"https://{DOMINIO}/categoria/{nombre_categoria}",
+            "OG_TYPE": "website",
+            "TWITTER_TITLE": titulo_pagina,
+            "TWITTER_DESCRIPTION": f"Noticias de {nombre_categoria.capitalize()}",
+            "TWITTER_IMAGE": f"https://{DOMINIO}/static/images/og-default.jpg",
+            "SCHEMA_JSON": "{}"
+        }
+        html = inyectar_meta_tags(html, meta_tags)
+        
+        return HTMLResponse(html)
+    except Exception as e:
+        return HTMLResponse(f"<h1>Error: {e}</h1>")
 
 
 async def obtener_noticia_por_id(noticia_id: int):

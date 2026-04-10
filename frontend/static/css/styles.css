@@ -126,6 +126,12 @@ main {
     padding: 0.2rem 0.6rem;
     border-radius: 12px;
     font-size: 0.8rem;
+    text-decoration: none;
+}
+
+.categoria-tag:hover {
+    background: var(--celeste-principal);
+    color: white;
 }
 
 .noticia-resumen {

@@ -38,41 +38,71 @@ def verificar_api_key(api_key: str = Depends(api_key_header)):
 def obtener_noticias(
     limite: int = Query(default=10, le=50),
     desde_id: int = Query(default=None),
+    categoria: str = Query(default=None),
     _: str = Depends(verificar_api_key)
 ):
     conn = get_connection()
     cur = conn.cursor()
-
-    # paginacion por cursor:
-    # si viene desde_id trae noticias con id menor (siguientes en el scroll)
-    # si no viene trae las mas recientes
+    
+    # Determinar si hay filtro por categoría
+    tiene_categoria = categoria and categoria.strip()
+    
+    # Base de la consulta
+    base_from = """
+        FROM noticias n
+        JOIN contenido c ON c.noticia_id = n.id
+        JOIN noticias_categorias nc ON nc.noticia_id = n.id
+        JOIN categorias cat ON cat.id = nc.categoria_id
+        WHERE n.estado = 'completo'
+        AND c.resumen_ia IS NOT NULL
+        AND c.resumen_ia != ''
+    """
+    
+    # Agregar filtro de categoría si corresponde
+    if tiene_categoria:
+        base_from += " AND LOWER(cat.nombre) = LOWER(%s)"
+    
+    # Paginación por cursor
     if desde_id:
-        cur.execute("""
-            SELECT n.id, n.titulo, n.fuente, n.link as link_original,
-                   n.fecha_publicacion as fecha,
-                   c.imagen_url, c.resumen, c.resumen_ia
-            FROM noticias n
-            JOIN contenido c ON c.noticia_id = n.id
-            WHERE n.estado = 'completo'
-            AND c.resumen_ia IS NOT NULL
-            AND c.resumen_ia != ''
-            AND n.id < %s
-            ORDER BY n.id DESC
-            LIMIT %s
-        """, (desde_id, limite + 1))
+        if tiene_categoria:
+            cur.execute(f"""
+                SELECT n.id, n.titulo, n.fuente, n.link as link_original,
+                       n.fecha_publicacion as fecha,
+                       c.imagen_url, c.resumen, c.resumen_ia
+                {base_from}
+                AND n.id < %s
+                ORDER BY n.id DESC
+                LIMIT %s
+            """, (categoria.strip(), desde_id, limite + 1))
+        else:
+            cur.execute(f"""
+                SELECT n.id, n.titulo, n.fuente, n.link as link_original,
+                       n.fecha_publicacion as fecha,
+                       c.imagen_url, c.resumen, c.resumen_ia
+                {base_from}
+                AND n.id < %s
+                ORDER BY n.id DESC
+                LIMIT %s
+            """, (desde_id, limite + 1))
     else:
-        cur.execute("""
-            SELECT n.id, n.titulo, n.fuente, n.link as link_original,
-                   n.fecha_publicacion as fecha,
-                   c.imagen_url, c.resumen, c.resumen_ia
-            FROM noticias n
-            JOIN contenido c ON c.noticia_id = n.id
-            WHERE n.estado = 'completo'
-            AND c.resumen_ia IS NOT NULL
-            AND c.resumen_ia != ''
-            ORDER BY n.id DESC
-            LIMIT %s
-        """, (limite + 1,))
+        if tiene_categoria:
+            cur.execute(f"""
+                SELECT n.id, n.titulo, n.fuente, n.link as link_original,
+                       n.fecha_publicacion as fecha,
+                       c.imagen_url, c.resumen, c.resumen_ia
+                {base_from}
+                ORDER BY n.id DESC
+                LIMIT %s
+            """, (categoria.strip(), limite + 1))
+        else:
+            cur.execute(f"""
+                SELECT n.id, n.titulo, n.fuente, n.link as link_original,
+                       n.fecha_publicacion as fecha,
+                       c.imagen_url, c.resumen, c.resumen_ia
+                {base_from}
+                ORDER BY n.id DESC
+                LIMIT %s
+            """, (limite + 1,))
 
     filas = cur.fetchall()
 
