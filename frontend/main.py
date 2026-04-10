@@ -114,16 +114,6 @@ def format_noticia_card(noticia, api_base, next_cursor=None, hay_mas=False):
     </div>
 </article>'''
     
-    if hay_mas and next_cursor:
-        card += f'''
-<div class="sentinel" 
-     hx-get="/noticias-scroll?desde_id={next_cursor}" 
-     hx-trigger="reveal" 
-     hx-swap="beforeend"
-     hx-target="closest .sentinel"
-     style="display:none">
-</div>'''
-    
     return card
 
 
@@ -145,18 +135,18 @@ async def index(request: Request):
         
         cards_html = "".join([format_noticia_card(n, IMAGEN_BASE_URL) for n in noticias])
         
-        sentinel_html = ""
-        if hay_mas and next_cursor:
-            sentinel_html = f'''
-<div class="sentinel" 
-     hx-get="/noticias-scroll?desde_id={next_cursor}" 
-     hx-trigger="reveal" 
-     hx-swap="beforeend"
-     hx-target="closest .sentinel"
-     style="display:none">
+        # El último card hace de sentinel para scroll infinito
+        if hay_mas and next_cursor and cards_html:
+            # Agregar atributos HTMX al último card
+            cards_html = cards_html + f'''
+<div hx-get="/noticias-scroll?desde_id={next_cursor}" 
+     hx-trigger="revealed" 
+     hx-swap="afterend"
+     class="sentinel-loader"
+     style="height:1px;">
 </div>'''
         
-        content = index_html.replace("<!-- NOTICIAS -->", cards_html + sentinel_html)
+        content = index_html.replace("<!-- NOTICIAS -->", cards_html)
         html = html.replace("<!-- CONTENT -->", content)
         
         # Inyectar meta tags para homepage
@@ -176,8 +166,19 @@ async def noticias_scroll(request: Request, desde_id: int):
         hay_mas = data.get("hay_mas", False)
         next_cursor = data.get("siguiente_cursor")
         
-        html = "".join([format_noticia_card(n, IMAGEN_BASE_URL, next_cursor, hay_mas) for n in noticias])
-        return HTMLResponse(html)
+        cards_html = "".join([format_noticia_card(n, IMAGEN_BASE_URL) for n in noticias])
+        
+        # Agregar sentinel al final si hay más noticias
+        if hay_mas and next_cursor and cards_html:
+            cards_html = cards_html + f'''
+<div hx-get="/noticias-scroll?desde_id={next_cursor}" 
+     hx-trigger="revealed" 
+     hx-swap="afterend"
+     class="sentinel-loader"
+     style="height:1px;">
+</div>'''
+        
+        return HTMLResponse(cards_html)
     except Exception:
         return HTMLResponse("")
 

@@ -166,10 +166,9 @@ main {
     to { transform: rotate(360deg); }
 }
 
-.sentinel {
+.sentinel-loader {
     height: 1px;
-    opacity: 0;
-    pointer-events: none;
+    width: 100%;
 }
 
 footer {
