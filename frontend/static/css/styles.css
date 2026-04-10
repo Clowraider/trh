@@ -167,7 +167,9 @@ main {
 }
 
 .sentinel {
-    display: none;
+    height: 1px;
+    opacity: 0;
+    pointer-events: none;
 }
 
 footer {
