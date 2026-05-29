@@ -1,0 +1,12 @@
+psycopg2-binary
+requests
+beautifulsoup4
+feedparser
+python-dateutil
+numpy
+lxml
+yake
+spacy
+psycopg2-binary
+flask
+python-dotenv
