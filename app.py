@@ -151,10 +151,40 @@ def listar_todos_los_clusters():
                         ELSE 6
                     END,
                     ce.score DESC
+                LIMIT 200
             """)
             return cur.fetchall()
     finally:
         conn.close()
+
+
+def obtener_keywords_por_clusters_ids(conn, cluster_ids):
+    """
+    Obtiene keywords agregadas por cluster para un conjunto de IDs.
+    """
+    if not cluster_ids:
+        return {}
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT
+                nh.cluster_id,
+                nk.valor_normalizado
+            FROM noticias_keywords nk
+            JOIN noticias_historico nh ON nh.id = nk.noticia_id
+            WHERE nh.cluster_id = ANY(%s)
+              AND nk.valor_normalizado IS NOT NULL
+              AND nk.valor_normalizado <> ''
+        """, (cluster_ids,))
+
+        out = {}
+        for row in cur.fetchall():
+            out.setdefault(row['cluster_id'], []).append(row['valor_normalizado'])
+
+        for cluster_id in out:
+            out[cluster_id] = sorted(set(out[cluster_id]))
+
+        return out
 
 
 def parse_contenido_ia(raw):
@@ -249,10 +279,9 @@ def index():
     try:
         candidatos = generar_candidatos(conn)
         scores_editoriales = {c['id']: c['score_editorial'] for c in candidatos}
-        keywords_por_cluster = {
-            c['id']: [k.get('valor_normalizado') for k in c.get('keywords', []) if k.get('valor_normalizado')]
-            for c in candidatos
-        }
+
+        cluster_ids = [c['id'] for c in clusters]
+        keywords_por_cluster = obtener_keywords_por_clusters_ids(conn, cluster_ids)
     finally:
         conn.close()
 

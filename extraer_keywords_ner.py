@@ -135,7 +135,15 @@ def obtener_noticias(conn):
 
         WHERE fecha_publicacion IS NOT NULL
           AND fecha_publicacion >= CURRENT_DATE - INTERVAL '{DIAS_ANALISIS} days'
-          AND (analizado_en IS NULL OR analizado_en < fecha_extraccion)
+          AND (
+              analizado_en IS NULL
+              OR analizado_en < fecha_extraccion
+              OR NOT EXISTS (
+                  SELECT 1
+                  FROM noticias_keywords nk
+                  WHERE nk.noticia_id = noticias_historico.id
+              )
+          )
 
         ORDER BY fecha_publicacion DESC, id DESC
     """)
