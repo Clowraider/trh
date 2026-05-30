@@ -9,3 +9,8 @@ venv/
 
 # Secrets
 .env
+
+# Virtual env
+trh/
+venv/
+.venv/
