@@ -29,7 +29,8 @@ from flask import (
     request,
     redirect,
     url_for,
-    flash
+    flash,
+    jsonify
 )
 from seleccionar_publicables import get_connection, generar_candidatos
 import publicador
@@ -39,6 +40,8 @@ app = Flask(__name__)
 
 # Secret key para sesiones (Flask lo requiere aunque no lo usemos para auth)
 app.secret_key = 'trh-mvp-secret-key-cambiar-en-produccion'
+
+TIPOS_KEYWORD_PERMITIDOS = ('keyword', 'persona', 'lugar', 'organizacion')
 
 
 # =============================================================================
@@ -257,6 +260,47 @@ def obtener_reporte_calidad(fuente=None, desde=None, hasta=None):
         conn.close()
 
 
+def normalizar_keyword_minima(keyword):
+    """
+    Normalización mínima acordada: trim + minúsculas.
+    No elimina tildes ni espacios internos.
+    """
+    return (keyword or '').strip().lower()
+
+
+def normalizar_tipo_keyword(tipo_raw):
+    tipo = (tipo_raw or '').strip().lower()
+    if not tipo:
+        return None
+    if tipo not in TIPOS_KEYWORD_PERMITIDOS:
+        return '__invalid__'
+    return tipo
+
+
+def listar_keywords_prioridad(q=None):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            params = []
+            where = []
+            if q:
+                where.append("keyword ILIKE %s")
+                params.append(f"%{q}%")
+
+            where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+            cur.execute(f"""
+                SELECT id, keyword, tipo, puntos, activo, creado_en
+                FROM keywords_prioridad
+                {where_sql}
+                ORDER BY activo DESC, puntos DESC, keyword ASC
+                LIMIT 500
+            """, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
 # =============================================================================
 # RUTAS
 # =============================================================================
@@ -314,6 +358,264 @@ def reporte_calidad():
         desde=desde or '',
         hasta=hasta or ''
     )
+
+
+@app.route("/keywords-prioridad")
+def panel_keywords_prioridad():
+    q = (request.args.get('q') or '').strip()
+    rows = listar_keywords_prioridad(q=q or None)
+    return render_template(
+        "panel_keywords_prioridad.html",
+        rows=rows,
+        q=q,
+        tipos_permitidos=TIPOS_KEYWORD_PERMITIDOS,
+        ahora=datetime.now()
+    )
+
+
+@app.route("/keywords-prioridad/crear", methods=["POST"])
+def crear_keyword_prioridad():
+    keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
+    tipo = normalizar_tipo_keyword(request.form.get('tipo'))
+    activo = (request.form.get('activo') == 'on')
+
+    try:
+        puntos = int(request.form.get('puntos', '0'))
+    except ValueError:
+        flash("Puntaje inválido", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    if not keyword:
+        flash("La keyword no puede estar vacía", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+    if tipo == '__invalid__':
+        flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                LIMIT 1
+                """,
+                (keyword,)
+            )
+            if cur.fetchone():
+                flash("Ya existe esa keyword (comparación en minúsculas)", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+
+            cur.execute(
+                """
+                INSERT INTO keywords_prioridad (keyword, tipo, puntos, activo)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (keyword, tipo, puntos, activo)
+            )
+        conn.commit()
+        flash("Keyword creada", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error creando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('panel_keywords_prioridad'))
+
+
+@app.route("/keywords-prioridad/<int:keyword_id>/editar", methods=["POST"])
+def editar_keyword_prioridad(keyword_id):
+    keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
+    tipo = normalizar_tipo_keyword(request.form.get('tipo'))
+    activo = (request.form.get('activo') == 'on')
+
+    try:
+        puntos = int(request.form.get('puntos', '0'))
+    except ValueError:
+        flash("Puntaje inválido", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    if not keyword:
+        flash("La keyword no puede estar vacía", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+    if tipo == '__invalid__':
+        flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                  AND id <> %s
+                LIMIT 1
+                """,
+                (keyword, keyword_id)
+            )
+            if cur.fetchone():
+                flash("Ya existe otra keyword igual en minúsculas", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+
+            cur.execute(
+                """
+                UPDATE keywords_prioridad
+                SET keyword = %s,
+                    tipo = %s,
+                    puntos = %s,
+                    activo = %s
+                WHERE id = %s
+                """,
+                (keyword, tipo, puntos, activo, keyword_id)
+            )
+            if cur.rowcount == 0:
+                flash("Keyword no encontrada", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+
+        conn.commit()
+        flash("Keyword actualizada", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error actualizando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('panel_keywords_prioridad'))
+
+
+@app.route("/keywords-prioridad/<int:keyword_id>/borrar", methods=["POST"])
+def borrar_keyword_prioridad(keyword_id):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM keywords_prioridad WHERE id = %s", (keyword_id,))
+            if cur.rowcount == 0:
+                flash("Keyword no encontrada", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+        conn.commit()
+        flash("Keyword borrada", "info")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error borrando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('panel_keywords_prioridad'))
+
+
+@app.route("/keywords-prioridad/buscar")
+def buscar_keyword_prioridad():
+    keyword = normalizar_keyword_minima(request.args.get('keyword', ''))
+    if not keyword:
+        return jsonify({"ok": False, "error": "keyword vacía"}), 400
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, keyword, tipo, puntos, activo, creado_en
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                LIMIT 1
+                """,
+                (keyword,)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                return jsonify({
+                    "ok": True,
+                    "exists": False,
+                    "keyword": keyword,
+                    "tipos_permitidos": list(TIPOS_KEYWORD_PERMITIDOS)
+                })
+
+            return jsonify({
+                "ok": True,
+                "exists": True,
+                "row": {
+                    "id": row['id'],
+                    "keyword": row['keyword'],
+                    "tipo": row['tipo'],
+                    "puntos": row['puntos'],
+                    "activo": bool(row['activo'])
+                },
+                "tipos_permitidos": list(TIPOS_KEYWORD_PERMITIDOS)
+            })
+    finally:
+        conn.close()
+
+
+@app.route("/keywords-prioridad/upsert", methods=["POST"])
+def upsert_keyword_prioridad():
+    keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
+    tipo = normalizar_tipo_keyword(request.form.get('tipo'))
+    activo = (request.form.get('activo') == 'on')
+
+    try:
+        puntos = int(request.form.get('puntos', '0'))
+    except ValueError:
+        flash("Puntaje inválido", "warning")
+        return redirect(url_for('index'))
+
+    if not keyword:
+        flash("La keyword no puede estar vacía", "warning")
+        return redirect(url_for('index'))
+    if tipo == '__invalid__':
+        flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
+        return redirect(url_for('index'))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                LIMIT 1
+                """,
+                (keyword,)
+            )
+            existente = cur.fetchone()
+
+            if existente:
+                cur.execute(
+                    """
+                    UPDATE keywords_prioridad
+                    SET tipo = %s,
+                        puntos = %s,
+                        activo = %s
+                    WHERE id = %s
+                    """,
+                    (tipo, puntos, activo, existente['id'])
+                )
+                accion = "actualizada"
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO keywords_prioridad (keyword, tipo, puntos, activo)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (keyword, tipo, puntos, activo)
+                )
+                accion = "creada"
+
+        conn.commit()
+        flash(f"Keyword {accion}: {keyword}", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error guardando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('index'))
 
 
 @app.route("/cluster/<int:cluster_id>")
@@ -516,6 +818,21 @@ def descartar_cluster(cluster_id):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s",
+                (cluster_id,)
+            )
+            cluster = cur.fetchone()
+
+            if not cluster:
+                flash("Cluster no encontrado", "warning")
+                return redirect(url_for('index'))
+
+            estado_actual = cluster.get('estado_publicacion') or 'pendiente'
+            if estado_actual == 'descartado':
+                flash("El cluster ya estaba descartado", "info")
+                return redirect(url_for('index'))
+
             cur.execute("""
                 UPDATE clusters_editoriales
                 SET estado_publicacion = 'descartado',

@@ -66,12 +66,17 @@
           </p>
         </div>
         <div class="text-end">
-          <a
-            href="/reportes/calidad"
-            class="btn btn-outline-primary btn-sm mb-2"
-          >
-            📊 Calidad de extracción
-          </a>
+          <div class="mb-2 d-flex gap-2 justify-content-end">
+            <a
+              href="/keywords-prioridad"
+              class="btn btn-outline-secondary btn-sm"
+            >
+              🏷️ Keywords prioridad
+            </a>
+            <a href="/reportes/calidad" class="btn btn-outline-primary btn-sm">
+              📊 Calidad de extracción
+            </a>
+          </div>
           <div>
             <span class="badge badge-generado">Listo para publicar</span>
             <span class="badge badge-generando">Generando IA</span>
@@ -153,9 +158,14 @@
                   kws %}
                   <div class="mt-2" style="font-size: 0.75rem">
                     {% for kw in kws[:8] %}
-                    <span class="badge text-bg-light border me-1 mb-1"
-                      >{{ kw }}</span
+                    <button
+                      type="button"
+                      class="badge text-bg-light border me-1 mb-1"
+                      style="border: 0"
+                      onclick="openKeywordModal('{{ kw|replace("'", "&#39;") }}'); event.stopPropagation();"
                     >
+                      {{ kw }}
+                    </button>
                     {% endfor %}
                   </div>
                   {% endif %}
@@ -198,6 +208,24 @@
                     Editorial: {{ "%.1f"|format(scores_editoriales[cluster.id])
                     }}
                   </div>
+                  {% endif %} {% if estado != 'descartado' %}
+                  <form
+                    method="post"
+                    action="/descartar/{{ cluster.id }}"
+                    class="mt-2"
+                    onsubmit="
+                      event.stopPropagation();
+                      return confirm('¿Descartar este candidato?');
+                    "
+                  >
+                    <button
+                      type="submit"
+                      class="btn btn-outline-danger btn-sm"
+                      onclick="event.stopPropagation()"
+                    >
+                      Descartar
+                    </button>
+                  </form>
                   {% endif %}
                 </div>
               </div>
@@ -211,6 +239,117 @@
       {% endif %}
     </div>
 
+    <div class="modal fade" id="keywordModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <form method="post" action="/keywords-prioridad/upsert" id="keywordModalForm">
+            <div class="modal-header">
+              <h5 class="modal-title">Gestionar keyword</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div id="keywordModalStatus" class="alert alert-secondary py-2 mb-3" style="font-size:0.9rem;">
+                Cargando...
+              </div>
+
+              <div class="mb-2">
+                <label class="form-label">Keyword</label>
+                <input type="text" name="keyword" id="modalKeyword" class="form-control" readonly />
+              </div>
+
+              <div class="row g-2">
+                <div class="col-md-4">
+                  <label class="form-label">Puntos</label>
+                  <input type="number" name="puntos" id="modalPuntos" class="form-control" value="0" required />
+                </div>
+                <div class="col-md-8">
+                  <label class="form-label">Tipo</label>
+                  <select name="tipo" id="modalTipo" class="form-select">
+                    <option value="">(sin tipo)</option>
+                    <option value="keyword">keyword</option>
+                    <option value="persona">persona</option>
+                    <option value="lugar">lugar</option>
+                    <option value="organizacion">organizacion</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-check mt-3">
+                <input type="checkbox" name="activo" id="modalActivo" class="form-check-input" checked />
+                <label for="modalActivo" class="form-check-label">Activo</label>
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+              <button type="submit" class="btn btn-primary">Guardar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+      const keywordModal = new bootstrap.Modal(document.getElementById('keywordModal'));
+      const keywordModalForm = document.getElementById('keywordModalForm');
+
+      // Evita volver arriba luego de guardar desde el modal:
+      // guardamos scroll antes del submit y lo restauramos al recargar.
+      keywordModalForm.addEventListener('submit', () => {
+        sessionStorage.setItem('panelIndexRestoreScrollY', String(window.scrollY || 0));
+      });
+
+      window.addEventListener('load', () => {
+        const savedY = sessionStorage.getItem('panelIndexRestoreScrollY');
+        if (savedY !== null) {
+          sessionStorage.removeItem('panelIndexRestoreScrollY');
+          window.scrollTo({ top: Number(savedY), behavior: 'auto' });
+        }
+      });
+
+      async function openKeywordModal(rawKeyword) {
+        const statusEl = document.getElementById('keywordModalStatus');
+        const keywordEl = document.getElementById('modalKeyword');
+        const puntosEl = document.getElementById('modalPuntos');
+        const tipoEl = document.getElementById('modalTipo');
+        const activoEl = document.getElementById('modalActivo');
+
+        keywordEl.value = (rawKeyword || '').trim().toLowerCase();
+        puntosEl.value = 0;
+        tipoEl.value = '';
+        activoEl.checked = true;
+        statusEl.className = 'alert alert-secondary py-2 mb-3';
+        statusEl.textContent = 'Buscando keyword en prioridades...';
+
+        keywordModal.show();
+
+        try {
+          const resp = await fetch(`/keywords-prioridad/buscar?keyword=${encodeURIComponent(rawKeyword)}`);
+          const data = await resp.json();
+
+          if (!data.ok) {
+            statusEl.className = 'alert alert-warning py-2 mb-3';
+            statusEl.textContent = data.error || 'No se pudo consultar la keyword';
+            return;
+          }
+
+          if (data.exists) {
+            keywordEl.value = data.row.keyword || keywordEl.value;
+            puntosEl.value = data.row.puntos ?? 0;
+            tipoEl.value = data.row.tipo || '';
+            activoEl.checked = !!data.row.activo;
+            statusEl.className = 'alert alert-info py-2 mb-3';
+            statusEl.textContent = `Existe en prioridades (ID ${data.row.id}). Podés editarla.`;
+          } else {
+            keywordEl.value = data.keyword || keywordEl.value;
+            statusEl.className = 'alert alert-success py-2 mb-3';
+            statusEl.textContent = 'No existe en prioridades. Podés agregarla ahora.';
+          }
+        } catch (err) {
+          statusEl.className = 'alert alert-danger py-2 mb-3';
+          statusEl.textContent = 'Error consultando keyword';
+        }
+      }
+    </script>
   </body>
 </html>
