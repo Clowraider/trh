@@ -152,6 +152,11 @@ WantedBy=multi-user.target
 
 Recomendado para exponer el panel de forma estable (puerto 80/443) y dejar `app.py` sólo en localhost.
 
+Configuración lista para copiar en `deploy/`:
+- `deploy/trh-panel.service`
+- `deploy/nginx-trh.conf`
+- `deploy/README.md`
+
 ---
 
 ## Extracción de keywords y entidades

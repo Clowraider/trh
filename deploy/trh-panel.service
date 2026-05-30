@@ -1,0 +1,16 @@
+[Unit]
+Description=TRH Panel (Flask)
+After=network.target
+
+[Service]
+Type=simple
+User=ren
+WorkingDirectory=/home/ren/TRH
+EnvironmentFile=/home/ren/TRH/.env
+Environment=PATH=/home/ren/TRH/.venv/bin
+ExecStart=/home/ren/TRH/.venv/bin/python /home/ren/TRH/app.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
