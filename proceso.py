@@ -21,9 +21,9 @@ scripts_paralelos = [
 # ----------------------------------------
 
 scripts_secuenciales = [
-    "embedding_archivo.py",
-    "cluster_noticias.py",
-    "extraer_keywords_ner.py",
+    "pipeline/embedding_archivo.py",
+    "pipeline/cluster_noticias.py",
+    "pipeline/extraer_keywords_ner.py",
 ]
 
 LOCK_DIR = Path("/tmp")
