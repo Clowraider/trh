@@ -1,4 +1,4 @@
-from pipeline.seleccionar_publicables import main
+from pipeline.seleccionar_publicables import *  # noqa: F401,F403
 
 if __name__ == "__main__":
     main()

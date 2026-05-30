@@ -144,7 +144,7 @@ def limpiar_clusters(conn):
         cur.execute("""
             DELETE FROM clusters_editoriales
             WHERE id IN (
-                SELECT id
+                SELECT c.id
                 FROM clusters_editoriales c
                 JOIN noticias_historico n ON n.cluster_id = c.id
                 WHERE c.cantidad_noticias = 1
