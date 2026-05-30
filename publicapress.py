@@ -311,7 +311,7 @@ def subir_imagen_a_wordpress(url_imagen_externa):
         url_imagen_externa: URL completa de la imagen a subir
 
     Returns:
-        tuple (bool, attachment_id o None) — (éxito, id)
+        tuple (bool, attachment_id o None, source_url o None)
     """
     print(f"   📷 Descargando imagen: {url_imagen_externa[:80]}...")
 
@@ -330,7 +330,7 @@ def subir_imagen_a_wordpress(url_imagen_externa):
         # Si falló con http://, intentar con https:// si empezamos con http://
         if url_imagen_externa.startswith(('http://', 'https://')):
             print(f"   ❌ Error descargando imagen: {e}")
-            return False, None
+            return False, None, None
         
         # Intentar con https:// si probamos con http://
         if image_url.startswith('http://'):
@@ -342,10 +342,10 @@ def subir_imagen_a_wordpress(url_imagen_externa):
                 image_bytes = resp.content
             except Exception as e2:
                 print(f"   ❌ Error descargando imagen (también falló HTTPS): {e2}")
-                return False, None
+                return False, None, None
         else:
             print(f"   ❌ Error descargando imagen: {e}")
-            return False, None
+            return False, None, None
 
     mime_type = _obtener_mime_type(image_bytes)
     filename = _nombre_archivo_desde_url(url_imagen_externa)
@@ -376,20 +376,68 @@ def subir_imagen_a_wordpress(url_imagen_externa):
             attachment_id = data['id']
             print(f"   ✅ Imagen subida: ID {attachment_id}")
             print(f"   URL: {data.get('source_url', '')}")
-            return True, attachment_id
+            return True, attachment_id, data.get('source_url')
         else:
             print(f"   ❌ Error subiendo imagen: {resp.status_code}")
             print(f"   {resp.text[:500]}")
-            return False, None
+            return False, None, None
 
     except Exception as e:
         print(f"   ❌ Excepción subiendo imagen: {e}")
-        return False, None
+        return False, None, None
 
 
 # =============================================================================
 # PUBLICAR EN WORDPRESS
 # =============================================================================
+
+def _insertar_fotos_entre_parrafos(articulo_html, fotos_urls):
+    if not fotos_urls:
+        return articulo_html
+
+    import re
+
+    articulo = (articulo_html or '').strip()
+    if not articulo:
+        return articulo_html
+
+    # Caso HTML con <p>...</p>
+    parrafos_html = re.findall(r'<p\b[^>]*>.*?</p>', articulo, flags=re.IGNORECASE | re.DOTALL)
+    if parrafos_html:
+        total = len(parrafos_html)
+        posiciones = [max(1, total // 3), max(2, (2 * total) // 3)]
+        out = []
+        for idx, p in enumerate(parrafos_html, start=1):
+            out.append(p)
+            for foto_idx, pos in enumerate(posiciones[:len(fotos_urls)]):
+                if idx == pos:
+                    url = fotos_urls[foto_idx]
+                    out.append(f'<figure class="wp-block-image size-large"><img src="{url}" alt="" /></figure>')
+        return "\n".join(out)
+
+    # Caso texto plano: separar por líneas en blanco y envolver en <p>
+    bloques = [b.strip() for b in re.split(r'\n\s*\n', articulo) if b.strip()]
+    if not bloques:
+        return articulo_html
+
+    total = len(bloques)
+    posiciones = [max(1, total // 3), max(2, (2 * total) // 3)]
+    out = []
+    fotos_insertadas = 0
+    for idx, bloque in enumerate(bloques, start=1):
+        out.append(f"<p>{bloque}</p>")
+        for foto_idx, pos in enumerate(posiciones[:len(fotos_urls)]):
+            if idx == pos:
+                url = fotos_urls[foto_idx]
+                out.append(f'<figure class="wp-block-image size-large"><img src="{url}" alt="" /></figure>')
+                fotos_insertadas += 1
+
+    # Fallback: si no se insertaron todas, agregarlas al final
+    for url in fotos_urls[fotos_insertadas:]:
+        out.append(f'<figure class="wp-block-image size-large"><img src="{url}" alt="" /></figure>')
+
+    return "\n".join(out)
+
 
 def publicar_en_wordpress(titulo, resumen, contenido, categoria_id=None, featured_media_id=None):
     """
@@ -488,7 +536,8 @@ def publicar_cluster(cluster_id):
                     titulo_representativo,
                     contenido_ia,
                     estado_publicacion,
-                    foto_principal
+                    foto_principal,
+                    fotos_secundarias
                 FROM clusters_editoriales
                 WHERE id = %s
             """, (cluster_id,))
@@ -528,12 +577,20 @@ def publicar_cluster(cluster_id):
         articulo = contenido.get('articulo', '')
         categoria_nombre = contenido.get('categoria', '')
         foto_principal = cluster.get('foto_principal')
+        fotos_secundarias = cluster.get('fotos_secundarias') or []
+        if isinstance(fotos_secundarias, str):
+            try:
+                fotos_secundarias = json.loads(fotos_secundarias)
+            except (json.JSONDecodeError, TypeError):
+                fotos_secundarias = []
+        fotos_secundarias = [u for u in fotos_secundarias if isinstance(u, str) and u.strip()][:2]
 
         print(f"📋 Artículo a publicar:")
         print(f"   Título: {titulo}")
         print(f"   Categoría: {categoria_nombre}")
         print(f"   Resumen: {resumen[:80]}...")
         print(f"   Foto principal: {foto_principal or 'Sin foto'}")
+        print(f"   Fotos secundarias: {len(fotos_secundarias)}")
 
         # 1. Obtener o crear categoría en WordPress
         cat_id = obtener_o_crear_categoria(categoria_nombre)
@@ -541,16 +598,24 @@ def publicar_cluster(cluster_id):
         # 2. Subir imagen destacada si hay foto seleccionada
         featured_media_id = None
         if foto_principal:
-            exito_img, featured_media_id = subir_imagen_a_wordpress(foto_principal)
+            exito_img, featured_media_id, _featured_url = subir_imagen_a_wordpress(foto_principal)
             if not exito_img:
                 # La imagen falló pero seguimos con la publicación
                 print("   ⚠️  Continuando sin imagen destacada")
                 featured_media_id = None
 
+        fotos_secundarias_subidas = []
+        for foto in fotos_secundarias:
+            exito_sec, _sec_id, sec_url = subir_imagen_a_wordpress(foto)
+            if exito_sec and sec_url:
+                fotos_secundarias_subidas.append(sec_url)
+
+        articulo_final = _insertar_fotos_entre_parrafos(articulo, fotos_secundarias_subidas)
+
         # 3. Publicar en WordPress (con imagen asociada si hay)
         print("   Publicando en WordPress...")
         exito, url_wp = publicar_en_wordpress(
-            titulo, resumen, articulo, cat_id, featured_media_id
+            titulo, resumen, articulo_final, cat_id, featured_media_id
         )
 
         if not exito or not url_wp:

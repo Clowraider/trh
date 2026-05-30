@@ -22,6 +22,7 @@ CREATE TABLE "public"."clusters_editoriales" (
     "contenido_ia" jsonb,
     "estado_publicacion" character varying(30) DEFAULT 'pendiente',
     "foto_principal" text,
+    "fotos_secundarias" jsonb DEFAULT '[]'::jsonb,
     "nota_editor" text,
     "url_wp" text,
     CONSTRAINT "clusters_editoriales_pkey" PRIMARY KEY ("id")

@@ -48,6 +48,21 @@ TIPOS_KEYWORD_PERMITIDOS = ('keyword', 'persona', 'lugar', 'organizacion')
 # HELPERS DE BASE DE DATOS
 # =============================================================================
 
+def _normalizar_fotos_secundarias(raw):
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
+
+
 def obtener_cluster_db(cluster_id):
     """
     Obtiene un cluster por su ID con todas las columnas relevantes.
@@ -63,6 +78,7 @@ def obtener_cluster_db(cluster_id):
                     contenido_ia,
                     estado_publicacion,
                     foto_principal,
+                    fotos_secundarias,
                     url_wp,
                     nota_editor,
                     ultima_publicacion,
@@ -77,7 +93,10 @@ def obtener_cluster_db(cluster_id):
                 FROM clusters_editoriales
                 WHERE id = %s
             """, (cluster_id,))
-            return cur.fetchone()
+            row = cur.fetchone()
+            if row:
+                row['fotos_secundarias'] = _normalizar_fotos_secundarias(row.get('fotos_secundarias'))
+            return row
     finally:
         conn.close()
 
@@ -790,9 +809,22 @@ def publicar_cluster(cluster_id):
 @app.route("/set-foto/<int:cluster_id>", methods=["POST"])
 def set_foto_principal(cluster_id):
     """
-    Guarda la foto principal elegida por el editor.
+    Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
     """
-    foto_url = request.form.get('foto_url', '')
+    foto_principal = (request.form.get('foto_principal', '') or '').strip()
+    fotos_secundarias = [
+        (u or '').strip() for u in request.form.getlist('fotos_secundarias')
+        if (u or '').strip()
+    ]
+
+    # Limpiar duplicados preservando orden
+    fotos_limpias = []
+    for url in fotos_secundarias:
+        if url == foto_principal:
+            continue
+        if url not in fotos_limpias:
+            fotos_limpias.append(url)
+    fotos_limpias = fotos_limpias[:2]
 
     conn = get_connection()
     try:
@@ -800,10 +832,12 @@ def set_foto_principal(cluster_id):
             cur.execute("""
                 UPDATE clusters_editoriales
                 SET foto_principal = %s,
+                    fotos_secundarias = %s::jsonb,
                     actualizado_en = NOW()
                 WHERE id = %s
-            """, (foto_url, cluster_id))
+            """, (foto_principal, json.dumps(fotos_limpias, ensure_ascii=False), cluster_id))
         conn.commit()
+        flash("Fotos guardadas", "success")
     finally:
         conn.close()
 
