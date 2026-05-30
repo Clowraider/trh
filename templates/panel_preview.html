@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Preview — Cluster #{{ cluster.id }} — TRH</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background: #f0f2f5;
+      }
+      .article-card {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+      }
+      .article-meta {
+        font-size: 0.85rem;
+        color: #6c757d;
+      }
+      .article-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        line-height: 1.3;
+      }
+      .article-resumen {
+        font-style: italic;
+        color: #495057;
+        border-left: 4px solid #dee2e6;
+        padding-left: 1rem;
+      }
+      .article-body {
+        line-height: 1.7;
+        font-size: 0.95rem;
+      }
+      .article-body p {
+        margin-bottom: 1rem;
+      }
+      /* Input de edición */
+      .edit-title {
+        font-size: 1.5rem;
+        font-weight: 700;
+        border: 2px solid transparent;
+        transition: border-color 0.15s;
+      }
+      .edit-title:focus {
+        border-color: #0d6efd;
+        outline: none;
+      }
+      textarea.edit-body {
+        line-height: 1.7;
+        resize: vertical;
+      }
+      .categoria-badge {
+        font-size: 0.85rem;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container py-4" style="max-width: 800px">
+      <!-- Header con acciones -->
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <a
+            href="/cluster/{{ cluster.id }}"
+            class="text-decoration-none text-muted"
+          >
+            ← Volver al cluster
+          </a>
+          <h4 class="mb-0">Preview — Cluster #{{ cluster.id }}</h4>
+        </div>
+        <div>
+          <span class="badge bg-secondary me-2"
+            >Estado: {{ cluster.estado_publicacion }}</span
+          >
+        </div>
+      </div>
+
+      <!-- Flash messages -->
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %} {% for category, message in messages %}
+      <div
+        class="alert alert-{{ 'danger' if category == 'danger' else 'success' if category == 'success' else 'info' }} alert-dismissible fade show"
+      >
+        {{ message }}
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="alert"
+        ></button>
+      </div>
+      {% endfor %} {% endif %} {% endwith %}
+
+      <!-- ================================================================ -->
+      <!-- FORMULARIO DE EDICIÓN + PUBLICACIÓN                               -->
+      <!-- Los campos se guardan en contenido_ia como JSON antes de        -->
+      <!-- publicar. El form guarda los cambios y el botón publicar        -->
+      <!-- envia el contenido_ia actualizado a WordPress.                   -->
+      <!-- ================================================================ -->
+
+      <form
+        method="POST"
+        action="/guardar-edicion/{{ cluster.id }}"
+        id="editor-form"
+      >
+        <!-- Hidden: contenido_ia completo (se actualiza con JS antes de enviar) -->
+        <input type="hidden" name="contenido_json" id="contenido_json" />
+
+        <div class="article-card p-4 mb-4">
+          <!-- Título (editable) -->
+          <div class="mb-3">
+            <label class="form-label text-muted small">TÍTULO</label>
+            <input
+              type="text"
+              class="form-control edit-title"
+              id="edit_titulo"
+              value="{{ contenido_ia.titulo or '' }}"
+              placeholder="Título del artículo"
+            />
+          </div>
+
+          <!-- Meta: fuente + fecha + categoría -->
+          <div class="d-flex flex-wrap gap-3 mb-3 article-meta">
+            <div><strong>{{ cluster.cantidad_fuentes }}</strong> fuentes</div>
+            <div><strong>{{ cluster.cantidad_noticias }}</strong> noticias</div>
+            {% if cluster.foto_principal %}
+            <div>
+              📷 Foto seleccionada
+              <img
+                src="{{ cluster.foto_principal }}"
+                alt="foto"
+                style="max-height: 30px; border-radius: 3px; margin-left: 4px"
+              />
+            </div>
+            {% endif %}
+          </div>
+
+          <!-- Foto principal seleccionada -->
+          <div class="mb-4">
+            <label class="form-label text-muted small">FOTO PRINCIPAL</label>
+            {% if cluster.foto_principal %}
+            <div>
+              <img
+                src="{{ cluster.foto_principal }}"
+                alt="Foto principal"
+                style="
+                  width: 100%;
+                  max-height: 380px;
+                  object-fit: cover;
+                  border-radius: 8px;
+                  border: 1px solid #dee2e6;
+                "
+              />
+            </div>
+            <div class="form-text">
+              Si querés cambiarla, volvé al cluster y elegí otra foto.
+            </div>
+            {% else %}
+            <div class="alert alert-warning py-2 mb-0">
+              No hay foto principal seleccionada para este artículo.
+            </div>
+            {% endif %}
+          </div>
+
+          <!-- Resumen (editable) -->
+          <div class="mb-3">
+            <label class="form-label text-muted small">RESUMEN / LEAD</label>
+            <textarea
+              class="form-control"
+              id="edit_resumen"
+              rows="2"
+              placeholder="Lead de hasta 280 caracteres"
+            >
+{{ contenido_ia.resumen or '' }}</textarea
+            >
+            <div class="form-text">Se muestra como excerpt en WordPress</div>
+          </div>
+
+          <!-- Categoría (editable - selector) -->
+          <div class="mb-4">
+            <label class="form-label text-muted small">CATEGORÍA</label>
+            <select class="form-select categoria-badge" id="edit_categoria">
+              {% for cat in
+              ['Salud','Política','Deportes','Cultura','Economía','Sociedad','Turismo','Seguridad','Educación']
+              %}
+              <option
+                value="{{ cat }}"
+                {% if contenido_ia.categoria == cat %}selected{% endif %}
+              >
+                {{ cat }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <hr />
+
+          <!-- Cuerpo del artículo (editable) -->
+          <div class="mb-4">
+            <label class="form-label text-muted small">ARTÍCULO</label>
+            <textarea
+              class="form-control edit-body"
+              id="edit_articulo"
+              rows="18"
+              placeholder="Cuerpo del artículo..."
+            >
+{{ contenido_ia.articulo or '' }}</textarea
+            >
+          </div>
+
+          <!-- Notas del editor -->
+          <div class="mb-4">
+            <label class="form-label text-muted small">
+              NOTAS DEL EDITOR
+              <span class="text-muted"
+                >(no se publican, solo para referencia interna)</span
+              >
+            </label>
+            <textarea
+              class="form-control"
+              name="nota_editor"
+              rows="2"
+              placeholder="Ej: verificar cifras con la fuente, agregar dato de contexto..."
+            >
+{{ cluster.nota_editor or '' }}</textarea
+            >
+          </div>
+        </div>
+
+        <!-- Botones de acción -->
+        <div class="d-flex justify-content-between align-items-center mb-5">
+          <!-- Guardar cambios (sin publicar) -->
+          <button
+            type="submit"
+            class="btn btn-outline-secondary"
+            id="btn_guardar"
+          >
+            💾 Guardar cambios
+          </button>
+
+          <!-- Publicar en WordPress -->
+          <button
+            type="button"
+            class="btn btn-success btn-lg"
+            onclick="publicar_cluster()"
+            id="btn_publicar"
+          >
+            🚀 Publicar en WordPress
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      // Antes de guardar, actualizar el campo oculto contenido_json
+      // con los valores actuales de los campos editables.
+      // Así el editor puede cambiar lo que quiera y se persiste.
+      function actualizar_json() {
+        const contenido = {
+          titulo: document.getElementById("edit_titulo").value,
+          resumen: document.getElementById("edit_resumen").value,
+          articulo: document.getElementById("edit_articulo").value,
+          categoria: document.getElementById("edit_categoria").value,
+        };
+        document.getElementById("contenido_json").value =
+          JSON.stringify(contenido);
+      }
+
+      // Guardar cambios
+      document
+        .getElementById("btn_guardar")
+        .addEventListener("click", function (e) {
+          e.preventDefault();
+          actualizar_json();
+          document.getElementById("editor-form").submit();
+        });
+
+      // Publicar: confirmar antes de enviar
+      function publicar_cluster() {
+        if (
+          !confirm(
+            "¿Publicar este artículo en WordPress?\n\nEsta acción es irreversible.",
+          )
+        ) {
+          return;
+        }
+
+        // Actualizar el JSON con los cambios del editor
+        actualizar_json();
+
+        // Usar el formulario existente pero cambiar su acción a publicar
+        const form = document.getElementById("editor-form");
+        form.action = "/publicar/{{ cluster.id }}";
+        form.submit();
+      }
+    </script>
+  </body>
+</html>
