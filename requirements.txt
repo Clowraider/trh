@@ -7,6 +7,5 @@ numpy
 lxml
 yake
 spacy
-psycopg2-binary
 flask
 python-dotenv

@@ -146,8 +146,16 @@ TRH2 es un sistema de recolección, procesamiento y selección de noticias edito
 
 ## Requisitos
 - Python 3.11+
-- Dependencias listadas en `requirements.txt` (Flask, psycopg2, beautifulsoup4, requests, etc.)
+- Dependencias listadas en `requirements.txt` (incluye `spacy` y modelo `es_core_news_md`).
 - Variables de entorno definidas en `.env` (ver `.env.example`).
+
+### Instalación rápida
+```bash
+python3 -m venv trh
+source trh/bin/activate
+pip install -r requirements.txt
+python -m spacy download es_core_news_md
+```
 
 ### Variables de entorno para `embedding_archivo.py`
 - `DB_HOST`
@@ -167,6 +175,28 @@ TRH2 es un sistema de recolección, procesamiento y selección de noticias edito
 - El sistema asume que la base de datos ya está poblada con estructuras de tablas (se puede crear mediante migraciones externas).
 - Los crawlers pueden ejecutarse de forma periódica (por ejemplo, mediante cron) para alimentar la cola de URLs.
 - El dashboard se actualiza en tiempo real al cargar la página (consulta en vivo a la BD).
+
+## Pipeline de preprocesamiento (`proceso.py`)
+- Ejecuta crawlers en paralelo:
+  - `crawler/elliberal_crawler.py`
+  - `crawler/panorama_crawler.py`
+  - `crawler/nuevodiario_crawler.py`
+  - `crawler/termasdigital_crawler.py`
+  - `crawler/sursantiago_crawler.py`
+- Luego corre en secuencia:
+  - `embedding_archivo.py`
+  - `cluster_noticias.py`
+  - `extraer_keywords_ner.py`
+- Protección anti-solapamiento para cron:
+  - 1 ejecución activa máxima
+  - cola máxima de espera: 1
+  - si llega una tercera ejecución, se cancela.
+
+## Criterios de recencia (7 días)
+- `cluster_noticias.py` procesa solo noticias sin cluster con `fecha_publicacion` de los últimos 7 días.
+- Clusters sin noticias con `fecha_publicacion` reciente (>7 días) se eliminan automáticamente.
+- `extraer_keywords_ner.py` analiza noticias de 7 días por `fecha_publicacion` y limpia `noticias_keywords` antiguas para evitar crecimiento infinito.
+- Para tendencia horaria en clustering, se usa `fecha_publicacion` + hora de `fecha_extraccion` como aproximación.
 
 ## Posibles Mejoras
 - Agregar cache de consultas frecuentes.
