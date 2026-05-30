@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reporte de Calidad — TRH</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+  </head>
+  <body class="bg-light">
+    <div class="container py-4">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+          <a href="/" class="text-decoration-none text-muted"
+            >← Volver al panel</a
+          >
+          <h3 class="mb-0 mt-1">📊 Calidad de extracción</h3>
+        </div>
+      </div>
+
+      <div class="card mb-3">
+        <div class="card-body">
+          <form class="row g-2" method="GET" action="/reportes/calidad">
+            <div class="col-md-3">
+              <label class="form-label">Desde</label>
+              <input
+                type="date"
+                class="form-control"
+                name="desde"
+                value="{{ desde }}"
+              />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Hasta</label>
+              <input
+                type="date"
+                class="form-control"
+                name="hasta"
+                value="{{ hasta }}"
+              />
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Fuente</label>
+              <select class="form-select" name="fuente">
+                <option value="">Todas</option>
+                {% for f in fuentes %}
+                <option
+                  value="{{ f }}"
+                  {%
+                  if
+                  fuente_actual
+                  in
+                  [f]
+                  %}selected{%
+                  endif
+                  %}
+                >
+                  {{ f }}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2 d-flex align-items-end gap-2">
+              <button class="btn btn-primary w-100" type="submit">
+                Filtrar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body p-0">
+          {% if not filas %}
+          <div class="p-3 text-muted">
+            Sin datos para los filtros seleccionados.
+          </div>
+          {% else %}
+          <div class="table-responsive">
+            <table class="table table-sm table-striped mb-0 align-middle">
+              <thead class="table-light">
+                <tr>
+                  <th>Fuente</th>
+                  <th>Total</th>
+                  <th>Título OK</th>
+                  <th>Texto OK</th>
+                  <th>Fecha OK</th>
+                  <th>Imagen OK</th>
+                  <th>URL limpia OK</th>
+                  <th>Prom. título len</th>
+                  <th>Prom. texto len</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for r in filas %}
+                <tr>
+                  <td>{{ r.fuente }}</td>
+                  <td>{{ r.total }}</td>
+                  <td>
+                    {{ ((r.titulo_ok / r.total) * 100)|round(1) }}% ({{
+                    r.titulo_ok }})
+                  </td>
+                  <td>
+                    {{ ((r.texto_ok / r.total) * 100)|round(1) }}% ({{
+                    r.texto_ok }})
+                  </td>
+                  <td>
+                    {{ ((r.fecha_ok / r.total) * 100)|round(1) }}% ({{
+                    r.fecha_ok }})
+                  </td>
+                  <td>
+                    {{ ((r.imagen_ok / r.total) * 100)|round(1) }}% ({{
+                    r.imagen_ok }})
+                  </td>
+                  <td>
+                    {{ ((r.url_limpia_ok / r.total) * 100)|round(1) }}% ({{
+                    r.url_limpia_ok }})
+                  </td>
+                  <td>{{ r.titulo_len_avg or '-' }}</td>
+                  <td>{{ r.texto_len_avg or '-' }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Panel Editorial — TRH</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      /* Estado: colores de badge */
+      .badge-pendiente {
+        background-color: #6c757d;
+      }
+      .badge-generando {
+        background-color: #0d6efd;
+      }
+      .badge-generado {
+        background-color: #198754;
+      }
+      .badge-publicado {
+        background-color: #20c997;
+      }
+      .badge-descartado {
+        background-color: #dc3545;
+      }
+      .badge-nuevo {
+        background-color: #fd7e14;
+      }
+
+      .cluster-card {
+        cursor: pointer;
+        transition: box-shadow 0.15s;
+      }
+      .cluster-card:hover {
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+      }
+
+      /* Score grande en la lista */
+      .score-big {
+        font-size: 1.6rem;
+        font-weight: 700;
+        color: #0d6efd;
+      }
+
+      /* Secciones de grupos */
+      .section-title {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #6c757d;
+        margin-bottom: 0.5rem;
+      }
+    </style>
+  </head>
+  <body class="bg-light">
+    <div class="container py-4">
+      <!-- Header -->
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h2 class="mb-1">Panel Editorial</h2>
+          <p class="text-muted mb-0" style="font-size: 0.9rem">
+            Candidatos de las últimas 72 horas
+            <span class="badge bg-secondary ms-1">{{ clusters|length }}</span>
+          </p>
+        </div>
+        <div class="text-end">
+          <a
+            href="/reportes/calidad"
+            class="btn btn-outline-primary btn-sm mb-2"
+          >
+            📊 Calidad de extracción
+          </a>
+          <div>
+            <span class="badge badge-generado">Listo para publicar</span>
+            <span class="badge badge-generando">Generando IA</span>
+            <span class="badge badge-pendiente">Pendiente</span>
+            <span class="badge badge-publicado">Publicado</span>
+          </div>
+        </div>
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %} {% if
+      messages %} {% for category, message in messages %}
+      <div
+        class="alert alert-{{ 'danger' if category == 'danger' else 'success' if category == 'success' else 'info' if category == 'info' else 'warning' }} alert-dismissible fade show"
+      >
+        {{ message }}
+        <button
+          type="button"
+          class="btn-close"
+          data-bs-dismiss="alert"
+        ></button>
+      </div>
+      {% endfor %} {% endif %} {% endwith %}
+
+      <!-- ================================================================ -->
+      <!-- LISTA DE CLUSTERS                                               -->
+      <!-- ================================================================ -->
+
+      {% if not clusters %}
+      <div class="alert alert-info">
+        No hay clusters en las últimas 72 horas. Ejecutá los crawlers para
+        alimentar la base de datos.
+      </div>
+      {% else %}
+
+      <div class="row g-3">
+        {% for cluster in clusters %}
+
+        <!-- Tarjeta del cluster -->
+        <div class="col-12">
+          <div
+            class="card cluster-card shadow-sm h-100"
+            onclick="window.location='/cluster/{{ cluster.id }}'"
+            style="cursor: pointer"
+          >
+            <div class="card-body py-3">
+              <div class="row align-items-center">
+                <!-- Score + ID -->
+                <div class="col-auto text-center" style="min-width: 90px">
+                  <div class="score-big">
+                    {{ (cluster.score or 0)|round|int }}
+                  </div>
+                  <div class="text-muted" style="font-size: 0.75rem">score</div>
+                </div>
+
+                <!-- Título + meta -->
+                <div class="col">
+                  <h5 class="mb-1" style="font-size: 1rem">
+                    {{ cluster.titulo_representativo or '(Sin título)' }}
+                  </h5>
+                  <div class="text-muted" style="font-size: 0.8rem">
+                    <span class="badge bg-secondary"
+                      >{{ cluster.cantidad_noticias }} noticias</span
+                    >
+                    <span class="badge bg-light text-dark"
+                      >{{ cluster.cantidad_fuentes }} fuentes</span
+                    >
+                    {% if cluster.ultima_noticia %}
+                    <span class="ms-1">
+                      Última hace {{ (ahora -
+                      cluster.ultima_noticia.replace(tzinfo=None)).days * 24 +
+                      ((ahora -
+                      cluster.ultima_noticia.replace(tzinfo=None)).seconds /
+                      3600)|int }}h
+                    </span>
+                    {% endif %}
+                  </div>
+
+                  {% set kws = keywords_por_cluster.get(cluster.id, []) %} {% if
+                  kws %}
+                  <div class="mt-2" style="font-size: 0.75rem">
+                    {% for kw in kws[:8] %}
+                    <span class="badge text-bg-light border me-1 mb-1"
+                      >{{ kw }}</span
+                    >
+                    {% endfor %}
+                  </div>
+                  {% endif %}
+                </div>
+
+                <!-- Estado + acción -->
+                <div class="col-auto text-end">
+                  <!-- Badge de estado con color según estado_publicacion -->
+                  {% set estado = cluster.estado_publicacion or 'pendiente' %}
+                  {% if estado == 'generado' %}
+                  <span class="badge badge-generado fs-6">✅ Listo</span>
+                  {% elif estado == 'generando' %}
+                  <span class="badge badge-generando fs-6"
+                    >⏳ Generando...</span
+                  >
+                  {% elif estado == 'publicado' %}
+                  <span class="badge badge-publicado fs-6">🔗 WP</span>
+                  {% elif estado == 'descartado' %}
+                  <span class="badge badge-descartado fs-6">❌ Descartado</span>
+                  {% else %}
+                  <span class="badge badge-pendiente fs-6">⏸ Pendiente</span>
+                  {% endif %}
+
+                  <!-- Si ya se publicó, mostrar link a WP -->
+                  {% if cluster.url_wp %}
+                  <div style="font-size: 0.75rem" class="text-muted mt-1">
+                    <a
+                      href="{{ cluster.url_wp }}"
+                      target="_blank"
+                      onclick="event.stopPropagation()"
+                    >
+                      → Ver en WP
+                    </a>
+                  </div>
+                  {% endif %}
+
+                  <!-- Score editorial -->
+                  {% if scores_editoriales.get(cluster.id) %}
+                  <div class="text-muted mt-1" style="font-size: 0.75rem">
+                    Editorial: {{ "%.1f"|format(scores_editoriales[cluster.id])
+                    }}
+                  </div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {% endfor %}
+      </div>
+
+      {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
