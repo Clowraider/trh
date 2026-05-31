@@ -58,7 +58,7 @@ DB_CONFIG = {
 
 # Similitud mínima (0-1). 0.80 = 80% de coseno similarity
 # Si la similitud es menor, se crea un nuevo cluster.
-SIMILARITY_THRESHOLD = 0.70
+SIMILARITY_THRESHOLD = 0.80
 
 # Máximo de noticias sin cluster a procesar por corrida.
 # Evitar saturar la DB con una sola corrida.

@@ -145,51 +145,76 @@
           <h5 class="mb-0">📰 Noticias fuente ({{ noticias|length }})</h5>
         </div>
         <div class="card-body">
-          {% for noticia in noticias %}
-          <div class="noticia-item">
-            <div class="row align-items-start g-2">
-              <!-- Foto thumbnail -->
-              <div class="col-auto">
-                {% if noticia.url_imagen %}
-                <img
-                  src="{{ noticia.url_imagen }}"
-                  alt="foto"
-                  class="noticia-foto"
-                  onerror="
-                    this.style.display = 'none';
-                    this.nextElementSibling.style.display = 'flex';
-                  "
-                />
-                <div class="noticia-sin-foto" style="display: none">
-                  Sin foto
+          <form
+            method="POST"
+            action="/split-cluster/{{ cluster.id }}"
+            onsubmit="return confirm('¿Crear un nuevo cluster con las noticias seleccionadas?');"
+          >
+            {% for noticia in noticias %}
+            <div class="noticia-item">
+              <div class="row align-items-start g-2">
+                <div class="col-auto pt-1">
+                  <input
+                    type="checkbox"
+                    class="form-check-input"
+                    name="noticias_split"
+                    value="{{ noticia.id }}"
+                    title="Seleccionar para nuevo cluster"
+                  />
                 </div>
-                {% else %}
-                <div class="noticia-sin-foto">Sin foto</div>
-                {% endif %}
-              </div>
 
-              <!-- Info -->
-              <div class="col">
-                <div class="d-flex justify-content-between">
-                  <strong class="text-primary">[{{ noticia.fuente }}]</strong>
-                  <small class="text-muted">
-                    {{ noticia.fecha_publicacion.strftime('%d/%m/%Y %H:%M') if
-                    noticia.fecha_publicacion else 'Sin fecha' }}
-                  </small>
+                <!-- Foto thumbnail -->
+                <div class="col-auto">
+                  {% if noticia.url_imagen %}
+                  <img
+                    src="{{ noticia.url_imagen }}"
+                    alt="foto"
+                    class="noticia-foto"
+                    onerror="
+                      this.style.display = 'none';
+                      this.nextElementSibling.style.display = 'flex';
+                    "
+                  />
+                  <div class="noticia-sin-foto" style="display: none">
+                    Sin foto
+                  </div>
+                  {% else %}
+                  <div class="noticia-sin-foto">Sin foto</div>
+                  {% endif %}
                 </div>
-                <div>{{ noticia.titulo }}</div>
-                <a
-                  href="{{ noticia.url_original }}"
-                  target="_blank"
-                  class="small text-muted"
-                  onclick="event.stopPropagation()"
-                >
-                  {{ noticia.url_original[:80] }}...
-                </a>
+
+                <!-- Info -->
+                <div class="col">
+                  <div class="d-flex justify-content-between">
+                    <strong class="text-primary">[{{ noticia.fuente }}]</strong>
+                    <small class="text-muted">
+                      {{ noticia.fecha_publicacion.strftime('%d/%m/%Y %H:%M') if
+                      noticia.fecha_publicacion else 'Sin fecha' }}
+                    </small>
+                  </div>
+                  <div>{{ noticia.titulo }}</div>
+                  <a
+                    href="{{ noticia.url_original }}"
+                    target="_blank"
+                    class="small text-muted"
+                    onclick="event.stopPropagation()"
+                  >
+                    {{ noticia.url_original[:80] }}...
+                  </a>
+                </div>
               </div>
             </div>
-          </div>
-          {% endfor %}
+            {% endfor %}
+
+            <div class="d-flex justify-content-between align-items-center mt-3">
+              <small class="text-muted">
+                Seleccioná las noticias que querés mover al nuevo cluster.
+              </small>
+              <button type="submit" class="btn btn-outline-primary btn-sm">
+                Partir cluster con seleccionadas
+              </button>
+            </div>
+          </form>
         </div>
       </div>
 

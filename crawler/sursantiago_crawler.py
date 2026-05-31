@@ -33,7 +33,7 @@ EXCLUDE_PATHS = [
     '/audios', '/galerias', '/extras', '/widget', '/api/'
 ]
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 100
+MAX_NOTICIAS_POR_EJECUCION = 50
 DELAY = 2.8
 MAX_RETRIES = 3
 

@@ -127,6 +127,74 @@ def obtener_noticias_cluster(cluster_id):
         conn.close()
 
 
+def recalcular_cluster_editorial(cur, cluster_id):
+    """
+    Recalcula metadata de un cluster editorial según sus noticias actuales.
+    """
+    cur.execute("""
+        SELECT
+            COUNT(*)::int AS total_noticias,
+            COUNT(DISTINCT fuente)::int AS total_fuentes,
+            MIN(COALESCE(fecha_publicacion, fecha_extraccion)) AS primera,
+            MAX(COALESCE(fecha_publicacion, fecha_extraccion)) AS ultima
+        FROM noticias_historico
+        WHERE cluster_id = %s
+    """, (cluster_id,))
+    agg = cur.fetchone() or {}
+
+    total_noticias = int(agg.get('total_noticias') or 0)
+    total_fuentes = int(agg.get('total_fuentes') or 0)
+    primera = agg.get('primera')
+    ultima = agg.get('ultima')
+
+    cur.execute("""
+        SELECT titulo
+        FROM noticias_historico
+        WHERE cluster_id = %s
+        ORDER BY COALESCE(fecha_publicacion, fecha_extraccion) DESC, id DESC
+        LIMIT 1
+    """, (cluster_id,))
+    top = cur.fetchone() or {}
+    titulo = (top.get('titulo') or '').strip() or f"Cluster #{cluster_id}"
+
+    score = total_noticias * 2 + total_fuentes * 5
+    tendencia = total_noticias
+
+    cur.execute("""
+        UPDATE clusters_editoriales
+        SET
+            titulo_representativo = %s,
+            cantidad_noticias = %s,
+            cantidad_fuentes = %s,
+            primera_noticia = %s,
+            ultima_noticia = %s,
+            score = %s,
+            tendencia = %s,
+            estado_publicacion = CASE
+                WHEN %s = 0 THEN 'descartado'
+                ELSE 'pendiente'
+            END,
+            contenido_ia = CASE WHEN %s = 0 THEN contenido_ia ELSE NULL END,
+            foto_principal = CASE WHEN %s = 0 THEN foto_principal ELSE NULL END,
+            fotos_secundarias = CASE WHEN %s = 0 THEN fotos_secundarias ELSE '[]'::jsonb END,
+            actualizado_en = NOW()
+        WHERE id = %s
+    """, (
+        titulo,
+        total_noticias,
+        total_fuentes,
+        primera,
+        ultima,
+        score,
+        tendencia,
+        total_noticias,
+        total_noticias,
+        total_noticias,
+        total_noticias,
+        cluster_id,
+    ))
+
+
 def listar_todos_los_clusters():
     """
     Lista TODOS los clusters de las últimas 72h ordenados por:
@@ -842,6 +910,93 @@ def set_foto_principal(cluster_id):
         conn.close()
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+
+@app.route("/split-cluster/<int:cluster_id>", methods=["POST"])
+def split_cluster(cluster_id):
+    """
+    Crea un nuevo cluster moviendo noticias seleccionadas desde cluster_id.
+    """
+    raw_ids = request.form.getlist('noticias_split')
+    noticia_ids = []
+    for raw in raw_ids:
+        try:
+            noticia_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    noticia_ids = sorted(set(noticia_ids))
+
+    if not noticia_ids:
+        flash("Seleccioná al menos una noticia para crear el nuevo cluster.", "warning")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM clusters_editoriales WHERE id = %s", (cluster_id,))
+            origen = cur.fetchone()
+            if not origen:
+                flash("Cluster origen no encontrado.", "danger")
+                return redirect(url_for('index'))
+
+            cur.execute("SELECT COUNT(*) AS total FROM noticias_historico WHERE cluster_id = %s", (cluster_id,))
+            total_origen = int((cur.fetchone() or {}).get('total') or 0)
+            if total_origen <= 1:
+                flash("El cluster debe tener al menos 2 noticias para poder partirse.", "warning")
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            cur.execute("""
+                SELECT id
+                FROM noticias_historico
+                WHERE cluster_id = %s
+                  AND id = ANY(%s)
+            """, (cluster_id, noticia_ids))
+            ids_validos = sorted([row['id'] for row in cur.fetchall()])
+
+            if not ids_validos:
+                flash("Las noticias seleccionadas no pertenecen al cluster actual.", "warning")
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            if len(ids_validos) >= total_origen:
+                flash("No podés mover todas las noticias: dejá al menos una en el cluster original.", "warning")
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            nota = f"Cluster creado por split manual desde #{cluster_id} el {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            cur.execute("""
+                INSERT INTO clusters_editoriales
+                    (titulo_representativo, estado, estado_publicacion, fotos_secundarias, nota_editor)
+                VALUES
+                    (%s, 'nuevo', 'pendiente', '[]'::jsonb, %s)
+                RETURNING id
+            """, (f"Cluster derivado de #{cluster_id}", nota))
+            nuevo_cluster_id = cur.fetchone()['id']
+
+            cur.execute("""
+                UPDATE noticias_historico
+                SET cluster_id = %s,
+                    cluster_asignado_en = NOW()
+                WHERE cluster_id = %s
+                  AND id = ANY(%s)
+            """, (nuevo_cluster_id, cluster_id, ids_validos))
+
+            if cur.rowcount != len(ids_validos):
+                raise RuntimeError("No se pudieron mover todas las noticias seleccionadas.")
+
+            recalcular_cluster_editorial(cur, cluster_id)
+            recalcular_cluster_editorial(cur, nuevo_cluster_id)
+
+        conn.commit()
+        flash(
+            f"✅ Nuevo cluster #{nuevo_cluster_id} creado con {len(ids_validos)} noticias.",
+            "success"
+        )
+        return redirect(url_for('cluster_detalle', cluster_id=nuevo_cluster_id))
+    except Exception as e:
+        conn.rollback()
+        flash(f"❌ Error partiendo cluster: {e}", "danger")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+    finally:
+        conn.close()
 
 
 @app.route("/descartar/<int:cluster_id>", methods=["POST"])
