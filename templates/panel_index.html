@@ -60,10 +60,27 @@
       <div class="d-flex justify-content-between align-items-center mb-4">
         <div>
           <h2 class="mb-1">Panel Editorial</h2>
-          <p class="text-muted mb-0" style="font-size: 0.9rem">
+          <p class="text-muted mb-2" style="font-size: 0.9rem">
             Candidatos de las últimas 72 horas
             <span class="badge bg-secondary ms-1">{{ clusters|length }}</span>
           </p>
+          <form method="get" class="d-flex align-items-center gap-2">
+            <label for="orden" class="small text-muted">Ordenar por</label>
+            <select
+              id="orden"
+              name="orden"
+              class="form-select form-select-sm"
+              style="max-width: 220px"
+              onchange="this.form.submit()"
+            >
+              <option value="editorial" {{ 'selected' if orden_actual == 'editorial' else '' }}>
+                Puntaje editorial
+              </option>
+              <option value="score" {{ 'selected' if orden_actual == 'score' else '' }}>
+                Score técnico
+              </option>
+            </select>
+          </form>
         </div>
         <div class="text-end">
           <div class="mb-2 d-flex gap-2 justify-content-end">

@@ -397,12 +397,13 @@ def index():
     """
     Página principal: lista de candidatos a publicación.
 
-    Muestra todos los clusters de las últimas 72h ordenados por:
-    1. Estado (generado > generando > pendiente > publicado > descartado)
-    2. Score (mayor primero)
-
-    El editor puede hacer clic en cualquier tarjeta para ver el detalle.
+    Permite ordenar por score técnico o score editorial,
+    manteniendo prioridad por estado de publicación.
     """
+    orden_actual = (request.args.get('orden') or 'editorial').strip().lower()
+    if orden_actual not in ('score', 'editorial'):
+        orden_actual = 'editorial'
+
     clusters = listar_todos_los_clusters()
 
     # Traer score editorial recalculado + keywords por cluster
@@ -410,6 +411,27 @@ def index():
     try:
         candidatos = generar_candidatos(conn)
         scores_editoriales = {c['id']: c['score_editorial'] for c in candidatos}
+
+        prioridad_estado = {
+            'generado': 1,
+            'generando': 2,
+            'pendiente': 3,
+            'publicado': 4,
+            'descartado': 5,
+        }
+
+        def score_secundario(cluster):
+            if orden_actual == 'editorial':
+                return scores_editoriales.get(cluster['id']) or float('-inf')
+            return cluster.get('score') or 0
+
+        clusters = sorted(
+            clusters,
+            key=lambda c: (
+                prioridad_estado.get(c.get('estado_publicacion'), 6),
+                -score_secundario(c),
+            )
+        )
 
         cluster_ids = [c['id'] for c in clusters]
         keywords_por_cluster = obtener_keywords_por_clusters_ids(conn, cluster_ids)
@@ -421,6 +443,7 @@ def index():
         clusters=clusters,
         scores_editoriales=scores_editoriales,
         keywords_por_cluster=keywords_por_cluster,
+        orden_actual=orden_actual,
         ahora=datetime.now()
     )
 
