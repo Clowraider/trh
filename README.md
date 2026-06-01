@@ -206,7 +206,6 @@ Además se aplican filtros de ruido:
 ## Estructura de esquema
 
 - `estructura.sql`: snapshot actual del esquema (fuente única).
-- `estructura_pre_migrations.sql`: snapshot histórico previo.
 
 ## Versión
 
