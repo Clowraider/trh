@@ -1,35 +1,60 @@
 # TRH Panel
 
+Pipeline para extraer noticias, procesarlas con embeddings/clustering, asistir edición en panel y publicar con IA.
+
+## ¿Para qué sirve?
+
+1. Crawlers: buscan links y extraen noticias.
+2. Embeddings: vectorizan contenido para similitud.
+3. Clusters: agrupan noticias relacionadas.
+4. Keywords: extraen palabras clave.
+5. Panel: revisión editorial manual.
+6. IA: genera artículo del cluster elegido.
+7. Publicación: envía a WordPress.
+
+---
+
+## Requisitos
+
+- Python **3.11**
+- PostgreSQL
+- Extensión **pgvector** (obligatoria para embeddings/similitud)
+- Dependencias Python de `requirements.txt`
+
+> Sin `pgvector`, se degrada el flujo de embeddings y búsqueda de artículos similares.
+
+---
+
 ## Instalación desde cero
 
-1. Crear entorno y dependencias:
+1) Crear entorno e instalar dependencias:
 
 ```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-2. Configurar variables:
+2) Configurar variables:
 
 ```bash
 cp .env.example .env
 # editar .env
 ```
 
-3. Verificar variables requeridas:
+3) Verificar variables requeridas:
 
 ```bash
 ./scripts/check_env.sh
 ```
 
-4. Inicializar base de datos (estructura actual):
+4) Inicializar base de datos:
 
 ```bash
 ./scripts/init_db.sh
 ```
 
-5. Levantar panel:
+5) Levantar panel:
 
 ```bash
 python3 app.py
@@ -37,8 +62,151 @@ python3 app.py
 
 Panel: `http://localhost:5000/`
 
-## Notas
+---
 
-- `estructura.sql` = snapshot actual del esquema.
-- `estructura_pre_migrations.sql` = snapshot previo (referencia histórica).
-- `migrations/` se conserva por trazabilidad hasta cerrar limpieza final.
+## Operación diaria
+
+### Pipeline principal
+
+Se ejecuta con:
+
+```bash
+python3 proceso.py
+```
+
+`proceso.py` hace:
+- Crawlers en paralelo:
+  - `crawler/elliberal_crawler.py`
+  - `crawler/panorama_crawler.py`
+  - `crawler/nuevodiario_crawler.py`
+  - `crawler/termasdigital_crawler.py`
+  - `crawler/sursantiago_crawler.py`
+- Luego, secuencial:
+  - `pipeline/embedding_archivo.py`
+  - `pipeline/cluster_noticias.py`
+  - `pipeline/extraer_keywords_ner.py`
+
+Incluye locks para evitar ejecuciones solapadas y para permitir una sola corrida en cola.
+
+### Panel editorial
+
+```bash
+python3 app.py
+```
+
+### Publicación con IA
+
+Se realiza desde el flujo del panel sobre el artículo elegido.
+
+---
+
+## Cron sugerido (pipeline)
+
+Ejemplo (ajustar horarios):
+
+```cron
+0 7,10,13,16,19,22 * * * cd /ruta/TRH && /ruta/TRH/.venv/bin/python3 proceso.py >> /ruta/TRH/logs/proceso.log 2>&1
+```
+
+---
+
+## Pruebas
+
+Hay tests en `tests/`.
+
+Ejecución recomendada antes de cambios sensibles:
+
+```bash
+pytest -q
+```
+
+---
+
+## Producción (mínimo recomendado)
+
+### 1) Pipeline con cron
+
+Programar `proceso.py` en horarios definidos (según actualización de fuentes), evitando frecuencia excesiva para no saturar sitios pequeños.
+
+### 2) Panel como servicio (`systemd`)
+
+Ejemplo base de unidad:
+
+```ini
+[Unit]
+Description=TRH Panel
+After=network.target
+
+[Service]
+User=TU_USUARIO
+WorkingDirectory=/ruta/TRH
+Environment="PATH=/ruta/TRH/.venv/bin"
+ExecStart=/ruta/TRH/.venv/bin/python app.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 3) Reverse proxy (`nginx`)
+
+Recomendado para exponer el panel de forma estable (puerto 80/443) y dejar `app.py` sólo en localhost.
+
+Configuración lista para copiar en `deploy/`:
+- `deploy/trh-panel.service`
+- `deploy/nginx-trh.conf`
+- `deploy/README.md`
+
+---
+
+## Extracción de keywords y entidades
+
+Se usa `pipeline/extraer_keywords_ner.py` con enfoque híbrido:
+
+- **YAKE** (`yake`): extracción estadística de frases clave (tipo `keyword`), con `n=2`, deduplicación y top limitado.
+- **spaCy NER** (`spacy` + `es_core_news_md`): detección de entidades para:
+  - `PER` → `persona`
+  - `ORG` → `organizacion`
+  - `LOC` → `lugar`
+
+Además se aplican filtros de ruido:
+- eliminación de términos basura/promocionales;
+- límites por longitud/cantidad;
+- deduplicación por valor normalizado;
+- limpieza periódica de keywords fuera de ventana de análisis.
+
+---
+
+## Troubleshooting básico
+
+### 1) Error con embeddings / similitud
+- Verificar que `pgvector` esté instalado en la DB.
+- Reejecutar `./scripts/init_db.sh`.
+
+### 2) Fallos por credenciales o variables faltantes
+- Ejecutar `./scripts/check_env.sh`.
+- Confirmar `.env` completo (DB, OpenRouter, WordPress).
+
+### 3) Riesgo de saturar sitios fuente
+- No aumentar agresivamente frecuencia de corridas.
+- Mantener horarios razonables y monitorear tiempos/respuestas.
+- Priorizar estabilidad para no consumir ancho de banda de sitios pequeños.
+
+---
+
+## Estructura del repo (actual)
+
+- `crawler/`: crawlers por fuente.
+- `pipeline/`: procesamiento (embeddings, clustering, keywords, selección).
+- `maintenance/`: scripts de corrección/backfill.
+- raíz (`app.py`, `proceso.py`, `publicador.py`, `publicapress.py`): orquestación/panel/publicación.
+
+> Compatibilidad: se mantienen wrappers en raíz (`embedding_archivo.py`, `cluster_noticias.py`, `extraer_keywords_ner.py`, `seleccionar_publicables.py`, `correccion_sur_santiago.py`) para no romper llamadas existentes.
+
+## Estructura de esquema
+
+- `estructura.sql`: snapshot actual del esquema (fuente única).
+
+## Versión
+
+- Estado actual del proyecto: **v1.0.0**

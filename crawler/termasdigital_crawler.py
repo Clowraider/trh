@@ -117,6 +117,11 @@ def is_likely_article(soup):
 
 
 def extraer_fecha_termasdigital(soup):
+    """
+    Nueva lógica:
+    - Solo aceptar fecha de publicación en formato tipo: "9 abril, 2026"
+    - Cualquier otro formato => None (se usará fecha_extraccion en DB)
+    """
     meses = {
         'enero': 1, 'febrero': 2, 'marzo': 3, 'abril': 4,
         'mayo': 5, 'junio': 6, 'julio': 7, 'agosto': 8,
@@ -129,27 +134,24 @@ def extraer_fecha_termasdigital(soup):
 
     texto = fecha_span.get_text(" ", strip=True).lower()
 
-    match = re.search(r'hace\s+(\d+)\s+d[ií]as?', texto)
-    if match:
-        return datetime.now() - timedelta(days=int(match.group(1)))
+    # Acepta estrictamente fechas absolutas con año explícito.
+    # Ejemplos válidos: "9 abril, 2026" / "09 abril 2026"
+    match = re.search(r'^(\d{1,2})\s+([a-záéíóú]+),?\s+(\d{4})$', texto)
+    if not match:
+        return None
 
-    match = re.search(r'hace\s+(\d+)\s+semanas?', texto)
-    if match:
-        return datetime.now() - timedelta(weeks=int(match.group(1)))
+    dia = int(match.group(1))
+    mes_txt = match.group(2)
+    anio = int(match.group(3))
+    mes = meses.get(mes_txt)
 
-    match = re.search(r'(\d{1,2})\s+([a-záéíóú]+),?\s*(\d{4})?', texto)
-    if match:
-        dia = int(match.group(1))
-        mes_txt = match.group(2)
-        anio = int(match.group(3)) if match.group(3) else datetime.now().year
-        mes = meses.get(mes_txt)
-        if mes:
-            try:
-                return datetime(anio, mes, dia)
-            except:
-                return None
+    if not mes:
+        return None
 
-    return None
+    try:
+        return datetime(anio, mes, dia)
+    except Exception:
+        return None
 
 
 def extraer_texto_articulo(content):
@@ -181,6 +183,12 @@ def extraer_texto_articulo(content):
 def guardar_noticia(url, titulo, fecha_pub, texto, imagen):
     url = normalize_url_for_storage(url)
     fecha_pub = normalize_fecha_publicacion(fecha_pub)
+
+    # Regla solicitada: fecha_publicacion nunca vacía.
+    # Si no se pudo extraer una fecha de publicación válida,
+    # usar la fecha/hora de extracción (ahora).
+    if fecha_pub is None:
+        fecha_pub = datetime.now()
 
     if not titulo:
         logger.warning("❌ Sin título")
@@ -265,7 +273,10 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
 
     enlaces_guardados = 0
     for a in soup.find_all('a', href=True):
-        full_url = clean_url(urljoin(url, a['href']))
+        href = a.get('href')
+        if not isinstance(href, str):
+            continue
+        full_url = clean_url(urljoin(url, href))
         if is_valid_article_url(full_url):
             if save_url(full_url, importancia_links):
                 enlaces_guardados += 1

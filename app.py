@@ -29,7 +29,8 @@ from flask import (
     request,
     redirect,
     url_for,
-    flash
+    flash,
+    jsonify
 )
 from seleccionar_publicables import get_connection, generar_candidatos
 import publicador
@@ -40,10 +41,27 @@ app = Flask(__name__)
 # Secret key para sesiones (Flask lo requiere aunque no lo usemos para auth)
 app.secret_key = 'trh-mvp-secret-key-cambiar-en-produccion'
 
+TIPOS_KEYWORD_PERMITIDOS = ('keyword', 'persona', 'lugar', 'organizacion')
+
 
 # =============================================================================
 # HELPERS DE BASE DE DATOS
 # =============================================================================
+
+def _normalizar_fotos_secundarias(raw):
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
+
 
 def obtener_cluster_db(cluster_id):
     """
@@ -60,8 +78,10 @@ def obtener_cluster_db(cluster_id):
                     contenido_ia,
                     estado_publicacion,
                     foto_principal,
+                    fotos_secundarias,
                     url_wp,
                     nota_editor,
+                    nota_ia,
                     ultima_publicacion,
                     veces_publicado,
                     cantidad_noticias,
@@ -74,7 +94,10 @@ def obtener_cluster_db(cluster_id):
                 FROM clusters_editoriales
                 WHERE id = %s
             """, (cluster_id,))
-            return cur.fetchone()
+            row = cur.fetchone()
+            if row:
+                row['fotos_secundarias'] = _normalizar_fotos_secundarias(row.get('fotos_secundarias'))
+            return row
     finally:
         conn.close()
 
@@ -103,6 +126,74 @@ def obtener_noticias_cluster(cluster_id):
             return cur.fetchall()
     finally:
         conn.close()
+
+
+def recalcular_cluster_editorial(cur, cluster_id):
+    """
+    Recalcula metadata de un cluster editorial según sus noticias actuales.
+    """
+    cur.execute("""
+        SELECT
+            COUNT(*)::int AS total_noticias,
+            COUNT(DISTINCT fuente)::int AS total_fuentes,
+            MIN(COALESCE(fecha_publicacion, fecha_extraccion)) AS primera,
+            MAX(COALESCE(fecha_publicacion, fecha_extraccion)) AS ultima
+        FROM noticias_historico
+        WHERE cluster_id = %s
+    """, (cluster_id,))
+    agg = cur.fetchone() or {}
+
+    total_noticias = int(agg.get('total_noticias') or 0)
+    total_fuentes = int(agg.get('total_fuentes') or 0)
+    primera = agg.get('primera')
+    ultima = agg.get('ultima')
+
+    cur.execute("""
+        SELECT titulo
+        FROM noticias_historico
+        WHERE cluster_id = %s
+        ORDER BY COALESCE(fecha_publicacion, fecha_extraccion) DESC, id DESC
+        LIMIT 1
+    """, (cluster_id,))
+    top = cur.fetchone() or {}
+    titulo = (top.get('titulo') or '').strip() or f"Cluster #{cluster_id}"
+
+    score = total_noticias * 2 + total_fuentes * 5
+    tendencia = total_noticias
+
+    cur.execute("""
+        UPDATE clusters_editoriales
+        SET
+            titulo_representativo = %s,
+            cantidad_noticias = %s,
+            cantidad_fuentes = %s,
+            primera_noticia = %s,
+            ultima_noticia = %s,
+            score = %s,
+            tendencia = %s,
+            estado_publicacion = CASE
+                WHEN %s = 0 THEN 'descartado'
+                ELSE 'pendiente'
+            END,
+            contenido_ia = CASE WHEN %s = 0 THEN contenido_ia ELSE NULL END,
+            foto_principal = CASE WHEN %s = 0 THEN foto_principal ELSE NULL END,
+            fotos_secundarias = CASE WHEN %s = 0 THEN fotos_secundarias ELSE '[]'::jsonb END,
+            actualizado_en = NOW()
+        WHERE id = %s
+    """, (
+        titulo,
+        total_noticias,
+        total_fuentes,
+        primera,
+        ultima,
+        score,
+        tendencia,
+        total_noticias,
+        total_noticias,
+        total_noticias,
+        total_noticias,
+        cluster_id,
+    ))
 
 
 def listar_todos_los_clusters():
@@ -151,10 +242,40 @@ def listar_todos_los_clusters():
                         ELSE 6
                     END,
                     ce.score DESC
+                LIMIT 200
             """)
             return cur.fetchall()
     finally:
         conn.close()
+
+
+def obtener_keywords_por_clusters_ids(conn, cluster_ids):
+    """
+    Obtiene keywords agregadas por cluster para un conjunto de IDs.
+    """
+    if not cluster_ids:
+        return {}
+
+    with conn.cursor() as cur:
+        cur.execute("""
+            SELECT DISTINCT
+                nh.cluster_id,
+                nk.valor_normalizado
+            FROM noticias_keywords nk
+            JOIN noticias_historico nh ON nh.id = nk.noticia_id
+            WHERE nh.cluster_id = ANY(%s)
+              AND nk.valor_normalizado IS NOT NULL
+              AND nk.valor_normalizado <> ''
+        """, (cluster_ids,))
+
+        out = {}
+        for row in cur.fetchall():
+            out.setdefault(row['cluster_id'], []).append(row['valor_normalizado'])
+
+        for cluster_id in out:
+            out[cluster_id] = sorted(set(out[cluster_id]))
+
+        return out
 
 
 def parse_contenido_ia(raw):
@@ -227,6 +348,47 @@ def obtener_reporte_calidad(fuente=None, desde=None, hasta=None):
         conn.close()
 
 
+def normalizar_keyword_minima(keyword):
+    """
+    Normalización mínima acordada: trim + minúsculas.
+    No elimina tildes ni espacios internos.
+    """
+    return (keyword or '').strip().lower()
+
+
+def normalizar_tipo_keyword(tipo_raw):
+    tipo = (tipo_raw or '').strip().lower()
+    if not tipo:
+        return None
+    if tipo not in TIPOS_KEYWORD_PERMITIDOS:
+        return '__invalid__'
+    return tipo
+
+
+def listar_keywords_prioridad(q=None):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            params = []
+            where = []
+            if q:
+                where.append("keyword ILIKE %s")
+                params.append(f"%{q}%")
+
+            where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+            cur.execute(f"""
+                SELECT id, keyword, tipo, puntos, activo, creado_en
+                FROM keywords_prioridad
+                {where_sql}
+                ORDER BY activo DESC, puntos DESC, keyword ASC
+                LIMIT 500
+            """, params)
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
 # =============================================================================
 # RUTAS
 # =============================================================================
@@ -236,12 +398,13 @@ def index():
     """
     Página principal: lista de candidatos a publicación.
 
-    Muestra todos los clusters de las últimas 72h ordenados por:
-    1. Estado (generado > generando > pendiente > publicado > descartado)
-    2. Score (mayor primero)
-
-    El editor puede hacer clic en cualquier tarjeta para ver el detalle.
+    Permite ordenar por score técnico o score editorial,
+    manteniendo prioridad por estado de publicación.
     """
+    orden_actual = (request.args.get('orden') or 'editorial').strip().lower()
+    if orden_actual not in ('score', 'editorial'):
+        orden_actual = 'editorial'
+
     clusters = listar_todos_los_clusters()
 
     # Traer score editorial recalculado + keywords por cluster
@@ -249,10 +412,30 @@ def index():
     try:
         candidatos = generar_candidatos(conn)
         scores_editoriales = {c['id']: c['score_editorial'] for c in candidatos}
-        keywords_por_cluster = {
-            c['id']: [k.get('valor_normalizado') for k in c.get('keywords', []) if k.get('valor_normalizado')]
-            for c in candidatos
+
+        prioridad_estado = {
+            'generado': 1,
+            'generando': 2,
+            'pendiente': 3,
+            'publicado': 4,
+            'descartado': 5,
         }
+
+        def score_secundario(cluster):
+            if orden_actual == 'editorial':
+                return scores_editoriales.get(cluster['id']) or float('-inf')
+            return cluster.get('score') or 0
+
+        clusters = sorted(
+            clusters,
+            key=lambda c: (
+                prioridad_estado.get(c.get('estado_publicacion'), 6),
+                -score_secundario(c),
+            )
+        )
+
+        cluster_ids = [c['id'] for c in clusters]
+        keywords_por_cluster = obtener_keywords_por_clusters_ids(conn, cluster_ids)
     finally:
         conn.close()
 
@@ -261,6 +444,7 @@ def index():
         clusters=clusters,
         scores_editoriales=scores_editoriales,
         keywords_por_cluster=keywords_por_cluster,
+        orden_actual=orden_actual,
         ahora=datetime.now()
     )
 
@@ -285,6 +469,264 @@ def reporte_calidad():
         desde=desde or '',
         hasta=hasta or ''
     )
+
+
+@app.route("/keywords-prioridad")
+def panel_keywords_prioridad():
+    q = (request.args.get('q') or '').strip()
+    rows = listar_keywords_prioridad(q=q or None)
+    return render_template(
+        "panel_keywords_prioridad.html",
+        rows=rows,
+        q=q,
+        tipos_permitidos=TIPOS_KEYWORD_PERMITIDOS,
+        ahora=datetime.now()
+    )
+
+
+@app.route("/keywords-prioridad/crear", methods=["POST"])
+def crear_keyword_prioridad():
+    keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
+    tipo = normalizar_tipo_keyword(request.form.get('tipo'))
+    activo = (request.form.get('activo') == 'on')
+
+    try:
+        puntos = int(request.form.get('puntos', '0'))
+    except ValueError:
+        flash("Puntaje inválido", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    if not keyword:
+        flash("La keyword no puede estar vacía", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+    if tipo == '__invalid__':
+        flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                LIMIT 1
+                """,
+                (keyword,)
+            )
+            if cur.fetchone():
+                flash("Ya existe esa keyword (comparación en minúsculas)", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+
+            cur.execute(
+                """
+                INSERT INTO keywords_prioridad (keyword, tipo, puntos, activo)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (keyword, tipo, puntos, activo)
+            )
+        conn.commit()
+        flash("Keyword creada", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error creando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('panel_keywords_prioridad'))
+
+
+@app.route("/keywords-prioridad/<int:keyword_id>/editar", methods=["POST"])
+def editar_keyword_prioridad(keyword_id):
+    keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
+    tipo = normalizar_tipo_keyword(request.form.get('tipo'))
+    activo = (request.form.get('activo') == 'on')
+
+    try:
+        puntos = int(request.form.get('puntos', '0'))
+    except ValueError:
+        flash("Puntaje inválido", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    if not keyword:
+        flash("La keyword no puede estar vacía", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+    if tipo == '__invalid__':
+        flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
+        return redirect(url_for('panel_keywords_prioridad'))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                  AND id <> %s
+                LIMIT 1
+                """,
+                (keyword, keyword_id)
+            )
+            if cur.fetchone():
+                flash("Ya existe otra keyword igual en minúsculas", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+
+            cur.execute(
+                """
+                UPDATE keywords_prioridad
+                SET keyword = %s,
+                    tipo = %s,
+                    puntos = %s,
+                    activo = %s
+                WHERE id = %s
+                """,
+                (keyword, tipo, puntos, activo, keyword_id)
+            )
+            if cur.rowcount == 0:
+                flash("Keyword no encontrada", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+
+        conn.commit()
+        flash("Keyword actualizada", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error actualizando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('panel_keywords_prioridad'))
+
+
+@app.route("/keywords-prioridad/<int:keyword_id>/borrar", methods=["POST"])
+def borrar_keyword_prioridad(keyword_id):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM keywords_prioridad WHERE id = %s", (keyword_id,))
+            if cur.rowcount == 0:
+                flash("Keyword no encontrada", "warning")
+                return redirect(url_for('panel_keywords_prioridad'))
+        conn.commit()
+        flash("Keyword borrada", "info")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error borrando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('panel_keywords_prioridad'))
+
+
+@app.route("/keywords-prioridad/buscar")
+def buscar_keyword_prioridad():
+    keyword = normalizar_keyword_minima(request.args.get('keyword', ''))
+    if not keyword:
+        return jsonify({"ok": False, "error": "keyword vacía"}), 400
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, keyword, tipo, puntos, activo, creado_en
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                LIMIT 1
+                """,
+                (keyword,)
+            )
+            row = cur.fetchone()
+
+            if not row:
+                return jsonify({
+                    "ok": True,
+                    "exists": False,
+                    "keyword": keyword,
+                    "tipos_permitidos": list(TIPOS_KEYWORD_PERMITIDOS)
+                })
+
+            return jsonify({
+                "ok": True,
+                "exists": True,
+                "row": {
+                    "id": row['id'],
+                    "keyword": row['keyword'],
+                    "tipo": row['tipo'],
+                    "puntos": row['puntos'],
+                    "activo": bool(row['activo'])
+                },
+                "tipos_permitidos": list(TIPOS_KEYWORD_PERMITIDOS)
+            })
+    finally:
+        conn.close()
+
+
+@app.route("/keywords-prioridad/upsert", methods=["POST"])
+def upsert_keyword_prioridad():
+    keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
+    tipo = normalizar_tipo_keyword(request.form.get('tipo'))
+    activo = (request.form.get('activo') == 'on')
+
+    try:
+        puntos = int(request.form.get('puntos', '0'))
+    except ValueError:
+        flash("Puntaje inválido", "warning")
+        return redirect(url_for('index'))
+
+    if not keyword:
+        flash("La keyword no puede estar vacía", "warning")
+        return redirect(url_for('index'))
+    if tipo == '__invalid__':
+        flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
+        return redirect(url_for('index'))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id
+                FROM keywords_prioridad
+                WHERE lower(trim(keyword)) = %s
+                LIMIT 1
+                """,
+                (keyword,)
+            )
+            existente = cur.fetchone()
+
+            if existente:
+                cur.execute(
+                    """
+                    UPDATE keywords_prioridad
+                    SET tipo = %s,
+                        puntos = %s,
+                        activo = %s
+                    WHERE id = %s
+                    """,
+                    (tipo, puntos, activo, existente['id'])
+                )
+                accion = "actualizada"
+            else:
+                cur.execute(
+                    """
+                    INSERT INTO keywords_prioridad (keyword, tipo, puntos, activo)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (keyword, tipo, puntos, activo)
+                )
+                accion = "creada"
+
+        conn.commit()
+        flash(f"Keyword {accion}: {keyword}", "success")
+    except Exception as e:
+        conn.rollback()
+        flash(f"Error guardando keyword: {e}", "danger")
+    finally:
+        conn.close()
+
+    return redirect(url_for('index'))
 
 
 @app.route("/cluster/<int:cluster_id>")
@@ -344,7 +786,23 @@ def generar_articulo(cluster_id):
         )
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    resultado = publicador.generar_articulo_para_cluster(cluster_id)
+    nota_ia = (request.form.get('nota_ia', '') or '').strip()
+
+    if nota_ia != (cluster.get('nota_ia') or '').strip():
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET nota_ia = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (nota_ia, cluster_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    resultado = publicador.generar_articulo_para_cluster(cluster_id, nota_ia=nota_ia)
 
     if resultado["ok"]:
         flash("✅ Artículo generado correctamente", "success")
@@ -459,9 +917,22 @@ def publicar_cluster(cluster_id):
 @app.route("/set-foto/<int:cluster_id>", methods=["POST"])
 def set_foto_principal(cluster_id):
     """
-    Guarda la foto principal elegida por el editor.
+    Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
     """
-    foto_url = request.form.get('foto_url', '')
+    foto_principal = (request.form.get('foto_principal', '') or '').strip()
+    fotos_secundarias = [
+        (u or '').strip() for u in request.form.getlist('fotos_secundarias')
+        if (u or '').strip()
+    ]
+
+    # Limpiar duplicados preservando orden
+    fotos_limpias = []
+    for url in fotos_secundarias:
+        if url == foto_principal:
+            continue
+        if url not in fotos_limpias:
+            fotos_limpias.append(url)
+    fotos_limpias = fotos_limpias[:2]
 
     conn = get_connection()
     try:
@@ -469,14 +940,103 @@ def set_foto_principal(cluster_id):
             cur.execute("""
                 UPDATE clusters_editoriales
                 SET foto_principal = %s,
+                    fotos_secundarias = %s::jsonb,
                     actualizado_en = NOW()
                 WHERE id = %s
-            """, (foto_url, cluster_id))
+            """, (foto_principal, json.dumps(fotos_limpias, ensure_ascii=False), cluster_id))
         conn.commit()
+        flash("Fotos guardadas", "success")
     finally:
         conn.close()
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+
+@app.route("/split-cluster/<int:cluster_id>", methods=["POST"])
+def split_cluster(cluster_id):
+    """
+    Crea un nuevo cluster moviendo noticias seleccionadas desde cluster_id.
+    """
+    raw_ids = request.form.getlist('noticias_split')
+    noticia_ids = []
+    for raw in raw_ids:
+        try:
+            noticia_ids.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    noticia_ids = sorted(set(noticia_ids))
+
+    if not noticia_ids:
+        flash("Seleccioná al menos una noticia para crear el nuevo cluster.", "warning")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM clusters_editoriales WHERE id = %s", (cluster_id,))
+            origen = cur.fetchone()
+            if not origen:
+                flash("Cluster origen no encontrado.", "danger")
+                return redirect(url_for('index'))
+
+            cur.execute("SELECT COUNT(*) AS total FROM noticias_historico WHERE cluster_id = %s", (cluster_id,))
+            total_origen = int((cur.fetchone() or {}).get('total') or 0)
+            if total_origen <= 1:
+                flash("El cluster debe tener al menos 2 noticias para poder partirse.", "warning")
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            cur.execute("""
+                SELECT id
+                FROM noticias_historico
+                WHERE cluster_id = %s
+                  AND id = ANY(%s)
+            """, (cluster_id, noticia_ids))
+            ids_validos = sorted([row['id'] for row in cur.fetchall()])
+
+            if not ids_validos:
+                flash("Las noticias seleccionadas no pertenecen al cluster actual.", "warning")
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            if len(ids_validos) >= total_origen:
+                flash("No podés mover todas las noticias: dejá al menos una en el cluster original.", "warning")
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            nota = f"Cluster creado por split manual desde #{cluster_id} el {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+            cur.execute("""
+                INSERT INTO clusters_editoriales
+                    (titulo_representativo, estado, estado_publicacion, fotos_secundarias, nota_editor)
+                VALUES
+                    (%s, 'nuevo', 'pendiente', '[]'::jsonb, %s)
+                RETURNING id
+            """, (f"Cluster derivado de #{cluster_id}", nota))
+            nuevo_cluster_id = cur.fetchone()['id']
+
+            cur.execute("""
+                UPDATE noticias_historico
+                SET cluster_id = %s,
+                    cluster_asignado_en = NOW()
+                WHERE cluster_id = %s
+                  AND id = ANY(%s)
+            """, (nuevo_cluster_id, cluster_id, ids_validos))
+
+            if cur.rowcount != len(ids_validos):
+                raise RuntimeError("No se pudieron mover todas las noticias seleccionadas.")
+
+            recalcular_cluster_editorial(cur, cluster_id)
+            recalcular_cluster_editorial(cur, nuevo_cluster_id)
+
+        conn.commit()
+        flash(
+            f"✅ Nuevo cluster #{nuevo_cluster_id} creado con {len(ids_validos)} noticias.",
+            "success"
+        )
+        return redirect(url_for('cluster_detalle', cluster_id=nuevo_cluster_id))
+    except Exception as e:
+        conn.rollback()
+        flash(f"❌ Error partiendo cluster: {e}", "danger")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+    finally:
+        conn.close()
 
 
 @app.route("/descartar/<int:cluster_id>", methods=["POST"])
@@ -487,6 +1047,21 @@ def descartar_cluster(cluster_id):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s",
+                (cluster_id,)
+            )
+            cluster = cur.fetchone()
+
+            if not cluster:
+                flash("Cluster no encontrado", "warning")
+                return redirect(url_for('index'))
+
+            estado_actual = cluster.get('estado_publicacion') or 'pendiente'
+            if estado_actual == 'descartado':
+                flash("El cluster ya estaba descartado", "info")
+                return redirect(url_for('index'))
+
             cur.execute("""
                 UPDATE clusters_editoriales
                 SET estado_publicacion = 'descartado',

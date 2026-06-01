@@ -165,6 +165,37 @@
             {% endif %}
           </div>
 
+          <div class="mb-4">
+            <label class="form-label text-muted small">FOTOS SECUNDARIAS</label>
+            {% set secundarias = cluster.fotos_secundarias or [] %} {% if
+            secundarias %}
+            <div class="row g-2">
+              {% for foto in secundarias %}
+              <div class="col-6 col-md-4">
+                <img
+                  src="{{ foto }}"
+                  alt="Foto secundaria {{ loop.index }}"
+                  style="
+                    width: 100%;
+                    max-height: 160px;
+                    object-fit: cover;
+                    border-radius: 6px;
+                    border: 1px solid #dee2e6;
+                  "
+                />
+              </div>
+              {% endfor %}
+            </div>
+            <div class="form-text">
+              Se insertan automáticamente entre párrafos al publicar.
+            </div>
+            {% else %}
+            <div class="alert alert-light border py-2 mb-0">
+              No hay fotos secundarias seleccionadas.
+            </div>
+            {% endif %}
+          </div>
+
           <!-- Resumen (editable) -->
           <div class="mb-3">
             <label class="form-label text-muted small">RESUMEN / LEAD</label>
