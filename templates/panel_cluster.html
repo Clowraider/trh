@@ -351,7 +351,20 @@
             La IA leerá las {{ noticias|length }} noticias y generará un
             artículo unificado con título, resumen, contenido y categoría.
           </p>
-          <form method="POST" action="/generar/{{ cluster.id }}">
+          <form method="POST" action="/generar/{{ cluster.id }}" class="mx-auto" style="max-width: 760px;">
+            <div class="mb-3 text-start">
+              <label for="nota-ia" class="form-label"><strong>Nota para la IA (opcional)</strong></label>
+              <textarea
+                id="nota-ia"
+                name="nota_ia"
+                rows="4"
+                class="form-control"
+                placeholder="Ej: Mantené tono imparcial, unificá eventos equivalentes y explicitá contradicciones sin duplicar protagonistas."
+              >{{ cluster.nota_ia or '' }}</textarea>
+              <div class="form-text">
+                Esta guía se adjunta al prompt de generación/regeneración.
+              </div>
+            </div>
             <button type="submit" class="btn btn-primary btn-xl">
               🤖 Generar con IA
             </button>
@@ -373,8 +386,19 @@
             <form
               method="POST"
               action="/generar/{{ cluster.id }}"
-              class="d-inline"
+              class="mx-auto mt-3"
+              style="max-width: 760px;"
             >
+              <div class="mb-3 text-start">
+                <label for="nota-ia-regenerar" class="form-label"><strong>Nota para la IA (opcional)</strong></label>
+                <textarea
+                  id="nota-ia-regenerar"
+                  name="nota_ia"
+                  rows="4"
+                  class="form-control"
+                  placeholder="Ej: Si hay diferencias de edad/fecha entre medios, tratá el caso como un solo evento."
+                >{{ cluster.nota_ia or '' }}</textarea>
+              </div>
               <button type="submit" class="btn btn-outline-primary btn-xl">
                 🔁 Regenerar con IA
               </button>

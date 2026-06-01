@@ -120,7 +120,7 @@ def obtener_noticias_cluster(cluster_id):
 # CONSTRUIR EL PROMPT PARA LA IA
 # =============================================================================
 
-def construir_prompt(noticias):
+def construir_prompt(noticias, nota_ia=''):
     """
     Arma el texto (prompt) que se envía a la IA.
 
@@ -154,9 +154,29 @@ def construir_prompt(noticias):
 INSTRUCCIONES IMPORTANTES:
 - Usa ÚNICAMENTE la información presente en las fuentes proporcionadas.
 - NO inventes datos, números, nombres, hechos ni conclusiones que no estén explícitamente en las noticias.
-- Si hay contradicciones entre fuentes, menciona las diferencias de forma neutral.
+
+RESOLUCIÓN DE IDENTIDAD Y HECHOS:
+- Antes de redactar, unifica entidades y hechos equivalentes entre fuentes.
+- Si dos fuentes describen el mismo hecho/persona con diferencias menores (ej: fecha 30 vs 31, edad 84 vs 85), trátalo como UN solo caso, no como casos distintos.
+- No infieras múltiples víctimas/protagonistas por variaciones menores de edad, fecha u hora.
+- Solo separa en hechos/personas distintas si hay evidencia clara de que sean eventos diferentes.
+
+MANEJO DE CONTRADICCIONES:
+- Prioriza el dato respaldado por más fuentes.
+- Si hay empate o no se puede resolver, expresa incertidumbre de forma neutral (ej: "84/85 años", "entre el 30 y el 31").
+- Cuando exista contradicción, redacta explícitamente "según X... mientras que Y..." sin duplicar el caso.
+
+CONSISTENCIA TEMPORAL:
+- Normaliza referencias temporales ambiguas (ej: "ayer", "anoche") al contexto del hecho cuando sea posible.
+- Si no es posible fijar una fecha única, usa una ventana temporal neutral.
+
+CALIDAD DE SALIDA:
 - Escribe en español neutro de Argentina, claro, profesional y objetivo.
 - Une la información de forma coherente y natural.
+- Antes de responder, verifica internamente:
+  1) que no duplicaste protagonistas,
+  2) que no hay números incompatibles sin aclaración,
+  3) que cada afirmación relevante está sustentada por al menos una fuente.
 
 Genera la respuesta EXACTAMENTE en este formato JSON:
 
@@ -168,6 +188,16 @@ Genera la respuesta EXACTAMENTE en este formato JSON:
 }
 
 No agregues ningún texto fuera del JSON.""")
+
+    nota_limpia = (nota_ia or '').strip()
+    if nota_limpia:
+        partes.append("""
+
+GUIA EDITORIAL ADICIONAL (opcional, dada por editor):
+- Seguí estas indicaciones SOLO si no contradicen las fuentes.
+- No uses esta guía para inventar hechos.
+""")
+        partes.append(nota_limpia)
 
     return "\n".join(partes)
 
@@ -207,7 +237,10 @@ def llamar_ia(prompt):
                             "content": (
                                 "Eres un redactor de noticias profesional. "
                                 "Tu regla más importante es: NUNCA inventes información. "
-                                "Solo puedes usar datos que aparezcan explícitamente en las fuentes proporcionadas."
+                                "Solo puedes usar datos que aparezcan explícitamente en las fuentes proporcionadas. "
+                                "Debes unificar el mismo hecho/persona entre fuentes aunque haya diferencias menores (edad, día exacto), "
+                                "evitar duplicar protagonistas salvo evidencia clara de casos distintos, "
+                                "y explicitar contradicciones con redacción neutral (ej: 'según X... mientras que Y...')."
                             )
                         },
                         {"role": "user", "content": prompt}
@@ -323,6 +356,8 @@ def obtener_cluster_con_detalles(cluster_id):
             if not cluster:
                 return None
 
+            cluster = dict(cluster)
+
             # Noticias del cluster (para mostrar en preview y para elegir foto)
             cur.execute("""
                 SELECT
@@ -346,7 +381,7 @@ def obtener_cluster_con_detalles(cluster_id):
 # FUNCIÓN PRINCIPAL: GENERAR Y GUARDAR
 # =============================================================================
 
-def generar_articulo_para_cluster(cluster_id):
+def generar_articulo_para_cluster(cluster_id, nota_ia=''):
     """
     Función principal que orquesta todo el proceso de generación.
 
@@ -394,7 +429,7 @@ def generar_articulo_para_cluster(cluster_id):
         }
 
     # 2. Construir prompt
-    prompt = construir_prompt(noticias)
+    prompt = construir_prompt(noticias, nota_ia=nota_ia)
 
     # 3. Llamar a la IA
     logger.info("🤖 Llamando a la IA...")
@@ -462,7 +497,8 @@ if __name__ == "__main__":
                 if not row:
                     print("No hay clusters pendientes.")
                     sys.exit(0)
-                cluster_id = row['id']  # type: ignore[index]
+                row = dict(row)
+                cluster_id = row['id']
                 resultado = generar_articulo_para_cluster(cluster_id)
         finally:
             conn.close()

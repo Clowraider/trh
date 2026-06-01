@@ -81,6 +81,7 @@ def obtener_cluster_db(cluster_id):
                     fotos_secundarias,
                     url_wp,
                     nota_editor,
+                    nota_ia,
                     ultima_publicacion,
                     veces_publicado,
                     cantidad_noticias,
@@ -785,7 +786,23 @@ def generar_articulo(cluster_id):
         )
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    resultado = publicador.generar_articulo_para_cluster(cluster_id)
+    nota_ia = (request.form.get('nota_ia', '') or '').strip()
+
+    if nota_ia != (cluster.get('nota_ia') or '').strip():
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET nota_ia = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (nota_ia, cluster_id))
+            conn.commit()
+        finally:
+            conn.close()
+
+    resultado = publicador.generar_articulo_para_cluster(cluster_id, nota_ia=nota_ia)
 
     if resultado["ok"]:
         flash("✅ Artículo generado correctamente", "success")
