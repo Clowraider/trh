@@ -10,3 +10,4 @@ spacy
 flask
 python-dotenv
 Pillow
+pytest

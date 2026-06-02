@@ -33,6 +33,7 @@ Pipeline para extraer noticias, procesarlas con embeddings/clustering, asistir e
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+python -m spacy download es_core_news_md
 ```
 
 2) Configurar variables:
@@ -117,7 +118,7 @@ Hay tests en `tests/`.
 Ejecución recomendada antes de cambios sensibles:
 
 ```bash
-pytest -q
+python -m pytest -q
 ```
 
 ---
@@ -177,6 +178,17 @@ Además se aplican filtros de ruido:
 
 ---
 
+## Fotos y marca de agua
+
+En el panel de cluster se puede elegir foto principal/secundarias desde las noticias fuente o subir fotos manuales temporales.
+
+- Las fotos temporales se guardan en `static/uploads/tmp/cluster_<id>/`.
+- Al publicar correctamente en WordPress, esas fotos temporales locales se borran.
+- Las imágenes subidas a WordPress **no se borran**, porque quedan asociadas al post.
+- La marca de agua se configura con variables `WATERMARK_*` en `.env`.
+
+---
+
 ## Troubleshooting básico
 
 ### 1) Error con embeddings / similitud
@@ -198,7 +210,9 @@ Además se aplican filtros de ruido:
 
 - `crawler/`: crawlers por fuente.
 - `pipeline/`: procesamiento (embeddings, clustering, keywords, selección).
-- `maintenance/`: scripts de corrección/backfill.
+- `deploy/`: archivos sugeridos para systemd/nginx.
+- `scripts/`: utilidades de entorno e inicialización.
+- `skills/`: skills/protocolos auxiliares del proyecto.
 - raíz (`app.py`, `proceso.py`, `publicador.py`, `publicapress.py`): orquestación/panel/publicación.
 
 > Compatibilidad: se mantienen wrappers en raíz (`embedding_archivo.py`, `cluster_noticias.py`, `extraer_keywords_ner.py`, `seleccionar_publicables.py`, `correccion_sur_santiago.py`) para no romper llamadas existentes.
@@ -209,4 +223,4 @@ Además se aplican filtros de ruido:
 
 ## Versión
 
-- Estado actual del proyecto: **v1.0.0**
+- Estado actual del proyecto: **v1.1.0**
