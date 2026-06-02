@@ -9,3 +9,4 @@ yake
 spacy
 flask
 python-dotenv
+Pillow

@@ -1,3 +1,4 @@
+# pyright: reportMissingImports=false
 """
 publicapress.py — Publica el artículo generado en WordPress.
 
@@ -16,14 +17,17 @@ Funciones exportadas:
 
 # pyright: reportGeneralTypeIssues=false
 import os
+import io
 import logging
 import time
+import shutil
 import requests
 import base64
 import json
 import psycopg2
 from urllib.parse import urlparse
 from psycopg2.extras import RealDictCursor
+from PIL import Image, ImageDraw, ImageFont
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -55,8 +59,33 @@ WP_URL = os.getenv("WP_URL", "https://trh.com.ar").rstrip('/')
 WP_USERNAME = os.getenv("WP_USERNAME")
 WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 
+def _env_float(name, default):
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+WATERMARK_ENABLED = os.getenv("WATERMARK_ENABLED", "false").lower() in ("1", "true", "yes", "on")
+WATERMARK_MODE = os.getenv("WATERMARK_MODE", "text").lower()  # text | logo | both
+WATERMARK_TEXT = os.getenv("WATERMARK_TEXT", "TRH.com.ar")
+WATERMARK_OPACITY = _env_float("WATERMARK_OPACITY", 0.35)
+WATERMARK_POSITION = os.getenv("WATERMARK_POSITION", "bottom_right").lower()  # bottom_right|bottom_left|top_right|top_left|center
+WATERMARK_MARGIN = _env_int("WATERMARK_MARGIN", 24)
+WATERMARK_LOGO_PATH = os.getenv("WATERMARK_LOGO_PATH", "")
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+TEMP_UPLOAD_BASE_DIR = os.path.join(PROJECT_ROOT, 'static', 'uploads', 'tmp')
 
 
 # =============================================================================
@@ -268,6 +297,69 @@ def obtener_o_crear_categoria(nombre):
 # SUBIDA DE IMAGENES A WORDPRESS
 # =============================================================================
 
+def _clamp(value, min_v, max_v):
+    return max(min_v, min(max_v, value))
+
+
+def _obtener_posicion(base_w, base_h, mark_w, mark_h):
+    m = max(0, WATERMARK_MARGIN)
+    pos = WATERMARK_POSITION
+    if pos == 'bottom_left':
+        return m, max(m, base_h - mark_h - m)
+    if pos == 'top_right':
+        return max(m, base_w - mark_w - m), m
+    if pos == 'top_left':
+        return m, m
+    if pos == 'center':
+        return max(0, (base_w - mark_w) // 2), max(0, (base_h - mark_h) // 2)
+    return max(m, base_w - mark_w - m), max(m, base_h - mark_h - m)
+
+
+def _aplicar_watermark(image_bytes):
+    if not WATERMARK_ENABLED:
+        return image_bytes
+
+    try:
+        base = Image.open(io.BytesIO(image_bytes)).convert('RGBA')
+    except Exception:
+        return image_bytes
+
+    overlay = Image.new('RGBA', base.size, (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
+    opacity = int(_clamp(WATERMARK_OPACITY, 0.0, 1.0) * 255)
+
+    if WATERMARK_MODE in ('logo', 'both') and WATERMARK_LOGO_PATH:
+        try:
+            logo = Image.open(WATERMARK_LOGO_PATH).convert('RGBA')
+            max_w = max(80, int(base.width * 0.18))
+            scale = min(1.0, max_w / max(1, logo.width))
+            new_size = (max(1, int(logo.width * scale)), max(1, int(logo.height * scale)))
+            logo = logo.resize(new_size)
+            alpha = logo.split()[-1].point(lambda a: int(a * _clamp(WATERMARK_OPACITY, 0.0, 1.0)))
+            logo.putalpha(alpha)
+            lx, ly = _obtener_posicion(base.width, base.height, logo.width, logo.height)
+            overlay.alpha_composite(logo, (lx, ly))
+        except Exception as e:
+            logger.warning("No se pudo aplicar logo watermark: %s", e)
+
+    if WATERMARK_MODE in ('text', 'both') and WATERMARK_TEXT.strip():
+        font_size = max(16, int(base.width * 0.03))
+        try:
+            font = ImageFont.truetype("DejaVuSans.ttf", font_size)
+        except Exception:
+            font = ImageFont.load_default()
+        bbox = draw.textbbox((0, 0), WATERMARK_TEXT, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        tx, ty = _obtener_posicion(base.width, base.height, tw, th)
+        draw.text((tx + 1, ty + 1), WATERMARK_TEXT, fill=(0, 0, 0, max(30, opacity // 2)), font=font)
+        draw.text((tx, ty), WATERMARK_TEXT, fill=(255, 255, 255, opacity), font=font)
+
+    out = Image.alpha_composite(base, overlay).convert('RGB')
+    buff = io.BytesIO()
+    out.save(buff, format='JPEG', quality=92, optimize=True)
+    return buff.getvalue()
+
+
 def _obtener_mime_type(content_bytes):
     """
     Detecta el MIME type a partir de los primeros bytes de la imagen.
@@ -296,6 +388,30 @@ def _nombre_archivo_desde_url(url):
     return nombre[:100]
 
 
+def _path_local_desde_url_temporal(url):
+    prefijo = '/static/uploads/tmp/'
+    if not isinstance(url, str) or not url.startswith(prefijo):
+        return None
+    rel = url[len(prefijo):].strip('/')
+    if '..' in rel:
+        return None
+    _, ext = os.path.splitext(rel.lower())
+    if ext not in ('.jpg', '.jpeg', '.png', '.gif', '.webp'):
+        return None
+
+    base = os.path.abspath(TEMP_UPLOAD_BASE_DIR)
+    path = os.path.abspath(os.path.join(base, rel))
+    if os.path.commonpath([base, path]) != base:
+        return None
+    return path
+
+
+def _limpiar_fotos_temporales_cluster(cluster_id):
+    path = os.path.join(TEMP_UPLOAD_BASE_DIR, f'cluster_{cluster_id}')
+    if os.path.isdir(path):
+        shutil.rmtree(path, ignore_errors=True)
+
+
 def subir_imagen_a_wordpress(url_imagen_externa):
     """
     Descarga una imagen desde una URL externa y la sube a WordPress como media.
@@ -313,25 +429,36 @@ def subir_imagen_a_wordpress(url_imagen_externa):
     Returns:
         tuple (bool, attachment_id o None, source_url o None)
     """
-    print(f"   📷 Descargando imagen: {url_imagen_externa[:80]}...")
+    print(f"   📷 Preparando imagen: {str(url_imagen_externa)[:80]}...")
 
     image_url = url_imagen_externa
-    try:
-        # Asegurarnos de que la URL tenga esquema
-        if not url_imagen_externa.startswith(('http://', 'https://')):
-            image_url = 'http://' + url_imagen_externa
-            print(f"   🔧 URL sin esquema, intentando con: {image_url}")
+    local_path = _path_local_desde_url_temporal(url_imagen_externa)
 
-        # Descargar la imagen (sin seguir redirect para obtener el archivo original)
-        resp = _request_with_retry("GET", image_url, timeout=30, allow_redirects=True)
-        resp.raise_for_status()
-        image_bytes = resp.content
+    try:
+        if local_path:
+            if not os.path.isfile(local_path):
+                print(f"   ❌ Foto temporal no encontrada: {local_path}")
+                return False, None, None
+            with open(local_path, 'rb') as fh:
+                image_bytes = fh.read()
+            filename = os.path.basename(local_path)
+        else:
+            # Asegurarnos de que la URL tenga esquema
+            if not url_imagen_externa.startswith(('http://', 'https://')):
+                image_url = 'http://' + url_imagen_externa
+                print(f"   🔧 URL sin esquema, intentando con: {image_url}")
+
+            # Descargar la imagen (sin seguir redirect para obtener el archivo original)
+            resp = _request_with_retry("GET", image_url, timeout=30, allow_redirects=True)
+            resp.raise_for_status()
+            image_bytes = resp.content
+            filename = _nombre_archivo_desde_url(url_imagen_externa)
     except Exception as e:
         # Si falló con http://, intentar con https:// si empezamos con http://
-        if url_imagen_externa.startswith(('http://', 'https://')):
-            print(f"   ❌ Error descargando imagen: {e}")
+        if local_path or url_imagen_externa.startswith(('http://', 'https://')):
+            print(f"   ❌ Error obteniendo imagen: {e}")
             return False, None, None
-        
+
         # Intentar con https:// si probamos con http://
         if image_url.startswith('http://'):
             https_url = 'https://' + image_url[7:]
@@ -340,6 +467,7 @@ def subir_imagen_a_wordpress(url_imagen_externa):
                 resp = _request_with_retry("GET", https_url, timeout=30, allow_redirects=True)
                 resp.raise_for_status()
                 image_bytes = resp.content
+                filename = _nombre_archivo_desde_url(url_imagen_externa)
             except Exception as e2:
                 print(f"   ❌ Error descargando imagen (también falló HTTPS): {e2}")
                 return False, None, None
@@ -347,8 +475,20 @@ def subir_imagen_a_wordpress(url_imagen_externa):
             print(f"   ❌ Error descargando imagen: {e}")
             return False, None, None
 
+    if not image_bytes:
+        return False, None, None
+
+    if 'filename' not in locals():
+        filename = _nombre_archivo_desde_url(url_imagen_externa)
+
+    if len(image_bytes) > 10 * 1024 * 1024:
+        print("   ❌ Imagen demasiado grande (>10MB)")
+        return False, None, None
+
+    image_bytes = _aplicar_watermark(image_bytes)
+    if WATERMARK_ENABLED:
+        filename = f"{os.path.splitext(filename)[0]}.jpg"
     mime_type = _obtener_mime_type(image_bytes)
-    filename = _nombre_archivo_desde_url(url_imagen_externa)
 
     print(f"   📤 Subiendo a WP: {filename} ({mime_type}, {len(image_bytes):,} bytes)")
 
@@ -638,6 +778,8 @@ def publicar_cluster(cluster_id):
                 WHERE id = %s
             """, (url_wp, cluster_id))
         conn.commit()
+
+        _limpiar_fotos_temporales_cluster(cluster_id)
 
         print(f"\n✅ Cluster {cluster_id} publicado exitosamente!")
         print(f"   URL WordPress: {url_wp}")
