@@ -18,6 +18,7 @@ Se levanta en http://0.0.0.0:5000
 import sys
 import os
 import json
+import uuid
 from datetime import datetime
 
 # Agregar el directorio del proyecto al path para poder importar los otros módulos
@@ -32,6 +33,7 @@ from flask import (
     flash,
     jsonify
 )
+from PIL import Image
 from seleccionar_publicables import get_connection, generar_candidatos
 import publicador
 import publicapress
@@ -42,6 +44,46 @@ app = Flask(__name__)
 app.secret_key = 'trh-mvp-secret-key-cambiar-en-produccion'
 
 TIPOS_KEYWORD_PERMITIDOS = ('keyword', 'persona', 'lugar', 'organizacion')
+
+TEMP_UPLOAD_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'uploads', 'tmp')
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8MB por imagen
+MAX_UPLOAD_FILES = 6
+app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES * MAX_UPLOAD_FILES
+
+
+def _cluster_upload_dir(cluster_id):
+    return os.path.join(TEMP_UPLOAD_BASE_DIR, f'cluster_{cluster_id}')
+
+
+def _ensure_cluster_upload_dir(cluster_id):
+    path = _cluster_upload_dir(cluster_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _es_imagen_valida(contenido):
+    try:
+        from io import BytesIO
+        with Image.open(BytesIO(contenido)) as img:
+            img.verify()
+        return True
+    except Exception:
+        return False
+
+
+def _listar_fotos_manuales(cluster_id):
+    path = _cluster_upload_dir(cluster_id)
+    if not os.path.isdir(path):
+        return []
+
+    fotos = []
+    for name in sorted(os.listdir(path)):
+        _, ext = os.path.splitext(name.lower())
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            continue
+        fotos.append(f"/static/uploads/tmp/cluster_{cluster_id}/{name}")
+    return fotos
 
 
 # =============================================================================
@@ -97,6 +139,7 @@ def obtener_cluster_db(cluster_id):
             row = cur.fetchone()
             if row:
                 row['fotos_secundarias'] = _normalizar_fotos_secundarias(row.get('fotos_secundarias'))
+                row['fotos_manuales'] = _listar_fotos_manuales(cluster_id)
             return row
     finally:
         conn.close()
@@ -914,15 +957,66 @@ def publicar_cluster(cluster_id):
         return redirect(url_for('preview_articulo', cluster_id=cluster_id))
 
 
+@app.route("/upload-fotos/<int:cluster_id>", methods=["POST"])
+def upload_fotos(cluster_id):
+    """Sube fotos manuales temporales para un cluster."""
+    cluster = obtener_cluster_db(cluster_id)
+    if not cluster:
+        flash("Cluster no encontrado", "danger")
+        return redirect(url_for('index'))
+
+    archivos = request.files.getlist('fotos')[:MAX_UPLOAD_FILES]
+    if not archivos:
+        flash("Seleccioná al menos una foto", "warning")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+    destino = _ensure_cluster_upload_dir(cluster_id)
+    subidas = 0
+
+    for archivo in archivos:
+        if not archivo or not archivo.filename:
+            continue
+        nombre = archivo.filename.strip()
+        _, ext = os.path.splitext(nombre.lower())
+        if ext not in ALLOWED_IMAGE_EXTENSIONS:
+            continue
+
+        contenido = archivo.read()
+        if not contenido or len(contenido) > MAX_UPLOAD_BYTES or not _es_imagen_valida(contenido):
+            continue
+
+        nombre_final = f"{uuid.uuid4().hex}{ext}"
+        with open(os.path.join(destino, nombre_final), 'wb') as fh:
+            fh.write(contenido)
+        subidas += 1
+
+    if subidas:
+        flash(f"{subidas} foto(s) temporales subidas", "success")
+    else:
+        flash("No se subieron fotos válidas (formatos: jpg, png, gif, webp; máx 8MB)", "warning")
+
+    return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+
 @app.route("/set-foto/<int:cluster_id>", methods=["POST"])
 def set_foto_principal(cluster_id):
     """
     Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
     """
+    urls_noticias = [
+        (n.get('url_imagen') or '').strip()
+        for n in obtener_noticias_cluster(cluster_id)
+        if (n.get('url_imagen') or '').strip()
+    ]
+    urls_permitidas = set(urls_noticias + _listar_fotos_manuales(cluster_id))
+
     foto_principal = (request.form.get('foto_principal', '') or '').strip()
+    if foto_principal and foto_principal not in urls_permitidas:
+        foto_principal = ''
+
     fotos_secundarias = [
         (u or '').strip() for u in request.form.getlist('fotos_secundarias')
-        if (u or '').strip()
+        if (u or '').strip() and (u or '').strip() in urls_permitidas
     ]
 
     # Limpiar duplicados preservando orden

@@ -11,6 +11,9 @@ venv/
 # Secrets
 .env
 
+# Temporary uploads
+static/uploads/tmp/
+
 # Virtual env
 trh/
 venv/
