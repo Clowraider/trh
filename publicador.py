@@ -164,7 +164,7 @@ RESOLUCIÓN DE IDENTIDAD Y HECHOS:
 MANEJO DE CONTRADICCIONES:
 - Prioriza el dato respaldado por más fuentes.
 - Si hay empate o no se puede resolver, expresa incertidumbre de forma neutral (ej: "84/85 años", "entre el 30 y el 31").
-- Cuando exista contradicción, redacta explícitamente "según X... mientras que Y..." sin duplicar el caso.
+- Cuando exista contradicción, expresa la incertidumbre de forma neutral sin duplicar el caso. En toda la salida, no nombres fuentes ni medios en el título, el resumen o el artículo.
 
 CONSISTENCIA TEMPORAL:
 - Normaliza referencias temporales ambiguas (ej: "ayer", "anoche") al contexto del hecho cuando sea posible.
