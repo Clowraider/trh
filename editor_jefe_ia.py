@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import time
 import unicodedata
 
 import requests
@@ -168,10 +169,13 @@ def build_editorial_context(connection_factory, panel_keywords_loader):
         conn.close()
 
 EDITOR_JEFE_SYSTEM_PROMPT = (
-    "You are an advisory Editor-in-Chief. Select zero or more supplied cluster IDs "
-    "up to the requested maximum using all supplied context. Never imply approval or "
-    "trigger actions. Return only JSON: {\"selections\":[{\"cluster_id\":1,"
-    "\"reason\":\"concise reason\"}]}"
+    "You are an advisory Editor-in-Chief for a Spanish-language newsroom. Review the "
+    "complete supplied candidate batch and select any relevant subset of its cluster IDs, "
+    "including none. The batch size limits only the input you receive; it is not a target "
+    "selection count. Exclude weather and forecast items unless they have an extraordinary "
+    "public-interest impact beyond routine conditions. Write every recommendation reason in "
+    "natural Spanish. Never imply approval or trigger actions. Return only JSON: "
+    "{\"selections\":[{\"cluster_id\":1,\"reason\":\"motivo breve en castellano\"}]}"
 )
 PAYLOAD_BYTE_LIMIT = 48_000
 RESPONSE_TOKEN_LIMIT = 1_200
@@ -194,15 +198,29 @@ def record_context_failure():
     logger.warning("editor_jefe.context_failure")
 
 
-def parse_maximum(raw):
+def _parse_positive_integer(raw, message, code):
     if not isinstance(raw, str) or not re.fullmatch(r"[1-9]\d*", raw):
-        raise FeatureError("A positive whole number is required", "input_failure")
+        raise FeatureError(message, code)
     return int(raw)
 
 
-def serialize_selection_payload(candidates, maximum):
+def parse_maximum(raw):
+    return _parse_positive_integer(
+        raw, "A positive whole number is required", "input_failure"
+    )
+
+
+def parse_minimum_editorial_score(raw):
+    return _parse_positive_integer(
+        raw,
+        "A positive whole number is required for editorial score",
+        "minimum_score_failure",
+    )
+
+
+def serialize_selection_payload(candidates, batch_size):
     payload = json.dumps(
-        {"candidates": candidates, "maximum": maximum}, ensure_ascii=False,
+        {"batch_size": batch_size, "candidates": candidates}, ensure_ascii=False,
         sort_keys=True, separators=(",", ":"),
     )
     if len(payload.encode("utf-8")) > PAYLOAD_BYTE_LIMIT:
@@ -239,8 +257,9 @@ def validate_selection_response(body, candidates, maximum):
 
 
 class OpenRouterSelectionClient:
-    def __init__(self, post=requests.post, api_key=None, models=None):
+    def __init__(self, post=requests.post, api_key=None, models=None, sleep=time.sleep):
         self.post = post
+        self.sleep = sleep
         self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
         self.models = models or (
             os.getenv("OPENROUTER_MODEL_PRIMARY", "openrouter/free"),
@@ -253,25 +272,44 @@ class OpenRouterSelectionClient:
     def select(self, payload):
         if not self.api_key:
             raise _failure("provider_failure", "Selection provider unavailable")
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://trh.local",
+            "X-Title": "TRH Editor Jefe IA",
+        }
         for model in self.models:
-            try:
-                response = self.post(
-                    self.url, headers={"Authorization": f"Bearer {self.api_key}"},
-                    json={"model": model, "messages": [
-                        {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
-                        {"role": "user", "content": payload},
-                    ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
-                          "response_format": {"type": "json_object"}}, timeout=70,
-                )
-                if not response.ok:
-                    continue
-                content = response.json()["choices"][0]["message"]["content"]
-                return json.loads(content)
-            except (IndexError, KeyError, TypeError, ValueError, requests.RequestException):
-                continue
+            for attempt in range(1, 3):
+                try:
+                    response = self.post(
+                        self.url, headers=headers,
+                        json={"model": model, "messages": [
+                            {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
+                            {"role": "user", "content": payload},
+                        ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
+                              "response_format": {"type": "json_object"}}, timeout=70,
+                    )
+                    if response.status_code == 429:
+                        logger.warning(
+                            "editor_jefe.provider_rate_limit model=%s attempt=%s",
+                            model, attempt,
+                        )
+                        self.sleep(2 * attempt)
+                        continue
+                    response.raise_for_status()
+                    content = response.json()["choices"][0]["message"]["content"]
+                    return json.loads(content.strip())
+                except (IndexError, KeyError, TypeError, ValueError,
+                        requests.RequestException):
+                    logger.warning(
+                        "editor_jefe.provider_attempt_failed model=%s attempt=%s",
+                        model, attempt,
+                    )
+                    self.sleep(2 * attempt)
         raise _failure("provider_failure", "Selection provider unavailable")
 
 
-def select_recommendations(candidates, maximum, client):
-    payload = serialize_selection_payload(candidates, maximum)
-    return validate_selection_response(client.select(payload), candidates, maximum)
+def select_recommendations(candidates, batch_size, client):
+    batch = candidates[:batch_size]
+    payload = serialize_selection_payload(batch, batch_size)
+    return validate_selection_response(client.select(payload), batch, batch_size)

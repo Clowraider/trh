@@ -6,10 +6,18 @@ import pytest
 import editor_jefe_ia as feature
 
 
-def candidate(cluster_id=1, title="Cluster", newest_at="2026-03-06T12:00:00+00:00"):
+DEFAULT_MINIMUM_EDITORIAL_SCORE = "50"
+
+
+def candidate(
+    cluster_id=1,
+    title="Cluster",
+    newest_at="2026-03-06T12:00:00+00:00",
+    editorial_score=8.0,
+):
     return {
         "cluster_id": cluster_id, "title": title, "technical_score": 4.0,
-        "editorial_score": 8.0, "news_count": 3, "source_count": 2,
+        "editorial_score": editorial_score, "news_count": 3, "source_count": 2,
         "newest_at": newest_at, "keywords": ["economía"],
         "recent_news": [{"title": "Nota", "source": "Medio",
                          "effective_at": newest_at, "excerpt": "Contexto"}],
@@ -26,13 +34,26 @@ def test_maximum_accepts_positive_whole_number_without_product_cap():
     assert feature.parse_maximum("999999") == 999999
 
 
+@pytest.mark.parametrize("raw", [None, "", "0", "-1", "1.5", " 50", "50 ", "true", True])
+def test_minimum_editorial_score_rejects_non_positive_whole_numbers(raw):
+    with pytest.raises(feature.FeatureError):
+        feature.parse_minimum_editorial_score(raw)
+
+
+def test_minimum_editorial_score_accepts_positive_whole_number_without_product_cap():
+    assert feature.parse_minimum_editorial_score("999999") == 999999
+
+
 def test_prompt_is_compact_stable_complete_and_budgeted():
     item = candidate()
     prompt = feature.serialize_selection_payload([item], 2)
     assert prompt == json.dumps(
-        {"candidates": [item], "maximum": 2}, ensure_ascii=False,
+        {"batch_size": 2, "candidates": [item]}, ensure_ascii=False,
         sort_keys=True, separators=(",", ":"),
     )
+    assert "weather and forecast items" in feature.EDITOR_JEFE_SYSTEM_PROMPT
+    assert "natural Spanish" in feature.EDITOR_JEFE_SYSTEM_PROMPT
+    assert "motivo breve en castellano" in feature.EDITOR_JEFE_SYSTEM_PROMPT
     base = len(feature.serialize_selection_payload([candidate(title="")], 1).encode())
     assert len(feature.serialize_selection_payload(
         [candidate(title="x" * (48_000 - base))], 1).encode()) == 48_000
@@ -40,11 +61,21 @@ def test_prompt_is_compact_stable_complete_and_budgeted():
         feature.serialize_selection_payload(
             [candidate(title="x" * (48_001 - base))], 1
         )
+
+
+def test_requested_number_limits_input_batch_not_output_target():
     candidates = [candidate(cluster_id=index) for index in range(528)]
-    client = type("Client", (), {"select": lambda *_: pytest.fail("provider called")})()
-    with pytest.raises(feature.FeatureError) as error:
-        feature.select_recommendations(candidates, 10, client)
-    assert error.value.code == "payload_failure"
+    payloads = []
+
+    class Client:
+        def select(self, payload):
+            payloads.append(json.loads(payload))
+            return {"selections": [{"cluster_id": 9, "reason": "Relevant"}]}
+
+    result = feature.select_recommendations(candidates, 10, Client())
+    assert [item["cluster_id"] for item in payloads[0]["candidates"]] == list(range(10))
+    assert payloads[0]["batch_size"] == 10
+    assert [item["cluster_id"] for item in result] == [9]
 
 
 @pytest.mark.parametrize("body", [
@@ -73,32 +104,104 @@ def test_validation_enforces_ceiling_and_restores_server_order():
     assert result[1]["reason"] == "second"
 
 
-def test_openrouter_client_uses_fixed_policy_and_bounded_allowance():
+def test_openrouter_client_uses_publicador_transport_policy():
     calls = []
 
     class Response:
-        ok = True
+        status_code = 200
+        def raise_for_status(self):
+            calls.append("raise_for_status")
         def json(self):
             return {"choices": [{"message": {"content": '{"selections":[]}'}}]}
 
     def post(url, **kwargs):
         calls.append((url, kwargs)); return Response()
 
-    client = feature.OpenRouterSelectionClient(post=post, api_key="secret", models=("one", "two"))
+    client = feature.OpenRouterSelectionClient(
+        post=post, api_key="secret", models=("one", "two"), sleep=lambda _: None
+    )
     assert client.select("{}") == {"selections": []}
     request = calls[0][1]["json"]
+    headers = calls[0][1]["headers"]
+    assert request["model"] == "one"
     assert request["messages"][0]["content"] == feature.EDITOR_JEFE_SYSTEM_PROMPT
     assert request["max_tokens"] == 1200
     assert request["response_format"] == {"type": "json_object"}
+    assert calls[0][1]["timeout"] == 70
+    assert headers == {
+        "Authorization": "Bearer secret", "Content-Type": "application/json",
+        "HTTP-Referer": "https://trh.local", "X-Title": "TRH Editor Jefe IA",
+    }
+    assert calls[-1] == "raise_for_status"
+
+
+def test_openrouter_retries_each_model_with_429_and_network_backoff():
+    calls, sleeps = [], []
+
+    class Response:
+        def __init__(self, status_code, content=None):
+            self.status_code, self.content = status_code, content
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise feature.requests.HTTPError(str(self.status_code))
+        def json(self):
+            return {"choices": [{"message": {"content": self.content}}]}
+
+    outcomes = [Response(429), Response(429), feature.requests.ConnectionError("down"),
+                Response(200, '{"selections":[]}')]
+    def post(_url, **kwargs):
+        calls.append(kwargs["json"]["model"])
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    client = feature.OpenRouterSelectionClient(
+        post=post, api_key="secret", models=("one", "two"), sleep=sleeps.append
+    )
+    assert client.select("{}") == {"selections": []}
+    assert calls == ["one", "one", "two", "two"]
+    assert sleeps == [2, 4, 2]
+
+
+def test_openrouter_retries_http_and_malformed_json_before_fallback_success():
+    calls, sleeps = [], []
+
+    class Response:
+        def __init__(self, status_code=200, content=None):
+            self.status_code, self.content = status_code, content
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise feature.requests.HTTPError(str(self.status_code))
+        def json(self):
+            if self.content == "malformed":
+                return {"choices": [{"message": {"content": "not-json"}}]}
+            return {"choices": [{"message": {"content": self.content}}]}
+
+    outcomes = [Response(500), Response(content="malformed"),
+                Response(content='{"selections":[]}')]
+    def post(_url, **kwargs):
+        calls.append(kwargs["json"]["model"])
+        return outcomes.pop(0)
+
+    client = feature.OpenRouterSelectionClient(
+        post=post, api_key="secret", models=("one", "two"), sleep=sleeps.append
+    )
+    assert client.select("{}") == {"selections": []}
+    assert calls == ["one", "one", "two"]
+    assert sleeps == [2, 4]
 
 
 def test_openrouter_missing_choice_fails_as_generic_feature_error():
     class Response:
-        ok = True
+        status_code = 200
+        def raise_for_status(self):
+            return None
         def json(self):
             return {"choices": []}
     client = feature.OpenRouterSelectionClient(
-        post=lambda *args, **kwargs: Response(), api_key="secret", models=("one",)
+        post=lambda *args, **kwargs: Response(), api_key="secret", models=("one",),
+        sleep=lambda _: None,
     )
     with pytest.raises(feature.FeatureError):
         client.select("{}")
@@ -107,7 +210,7 @@ def test_openrouter_missing_choice_fails_as_generic_feature_error():
 def test_get_and_post_are_response_only_and_use_injected_dependencies(monkeypatch):
     import app as panel
     calls = []
-    candidates = [candidate()]
+    candidates = [candidate(editorial_score=80)]
 
     def builder(factory, keyword_loader):
         calls.append((factory, keyword_loader)); return candidates
@@ -123,15 +226,78 @@ def test_get_and_post_are_response_only_and_use_injected_dependencies(monkeypatc
     client = panel.app.test_client()
     get_response = client.get("/editor-jefe-ia")
     assert get_response.status_code == 200 and calls == []
-    response = client.post("/editor-jefe-ia", data={"maximum": "1"})
+    assert f'value="{DEFAULT_MINIMUM_EDITORIAL_SCORE}"'.encode() in get_response.data
+    response = client.post(
+        "/editor-jefe-ia",
+        data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
     assert response.status_code == 200
     assert "no-store" in response.headers["Cache-Control"]
     assert "no-store" in get_response.headers["Cache-Control"]
     assert calls == [(factory, panel.obtener_keywords_por_clusters_ids)]
-    assert b"Relevant" in response.data and b"AI recommendation" in response.data
+    assert b"Relevant" in response.data and b"Recomendaci" in response.data
     assert "Location" not in response.headers
     assert response.headers.getlist("Set-Cookie") == []
     assert b"Relevant" not in client.get("/editor-jefe-ia").data
+
+
+@pytest.mark.parametrize("maximum", ["abc", "1.5", "0", "-1"])
+def test_invalid_maximum_explains_positive_whole_number_without_dependencies(maximum):
+    import app as panel
+
+    calls = []
+    panel.app.config.update(
+        TESTING=True,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: calls.append("context"),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: calls.append("provider"),
+    )
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": maximum, "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+    assert response.status_code == 200
+    assert b"n\xc3\xbamero entero positivo" in response.data
+    assert calls == []
+    assert b"Recomendaci" not in response.data
+    assert "Location" not in response.headers
+    assert response.headers.getlist("Set-Cookie") == []
+    assert "no-store" in response.headers["Cache-Control"]
+
+
+def test_invalid_minimum_score_explains_positive_whole_number_without_dependencies():
+    import app as panel
+
+    calls = []
+    panel.app.config.update(
+        TESTING=True,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: calls.append("context"),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: calls.append("provider"),
+    )
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia", data={"maximum": "1", "minimum_editorial_score": "0"}
+    )
+    assert response.status_code == 200
+    assert b"score editorial" in response.data
+    assert calls == []
+    assert b"Recomendaci" not in response.data
+
+
+def test_capacity_error_tells_user_to_request_fewer_candidates():
+    import app as panel
+
+    panel.app.config.update(
+        TESTING=True,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate(title="x" * 48_000, editorial_score=99)],
+    )
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+    assert b"lote solicitado es demasiado grande" in response.data
+    assert b"No se hizo ninguna solicitud a la IA" in response.data
+    assert b"ped\xc3\xad menos candidatos" in response.data
+    assert b"too many eligible clusters" not in response.data
+    assert b"try again later" not in response.data
 
 
 def test_provider_and_response_failures_render_only_retryable_error():
@@ -145,15 +311,48 @@ def test_provider_and_response_failures_render_only_retryable_error():
         def select(self, payload):
             return {"selections": [{"cluster_id": 999, "reason": "unknown"}]}
 
-    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate()],
+    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate(editorial_score=80)],
                             EDITOR_JEFE_CONNECTION_FACTORY=object())
     for provider in (lambda: BrokenClient(), lambda: InvalidClient()):
         panel.app.config["EDITOR_JEFE_CLIENT_FACTORY"] = provider
-        response = panel.app.test_client().post("/editor-jefe-ia", data={"maximum": "1"})
+        response = panel.app.test_client().post(
+            "/editor-jefe-ia",
+            data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+        )
         assert response.status_code == 200
-        assert b"Please try again" in response.data
+        assert b"Prob\xc3\xa1 de nuevo" in response.data
         assert b"provider detail" not in response.data and b"unknown" not in response.data
-        assert b"AI recommendation" not in response.data
+        assert b"Recomendaci" not in response.data
+
+
+def test_threshold_filters_candidates_before_provider_call(monkeypatch):
+    import app as panel
+
+    payloads = []
+    candidates = [
+        candidate(cluster_id=1, title="Bajo", editorial_score=50),
+        candidate(cluster_id=2, title="Alto", editorial_score=51),
+        candidate(cluster_id=3, title="Muy alto", editorial_score=80),
+    ]
+
+    class Client:
+        def select(self, payload):
+            payloads.append(json.loads(payload))
+            return {"selections": [{"cluster_id": 2, "reason": "Relevant"}]}
+
+    panel.app.config.update(
+        TESTING=True,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: candidates,
+        EDITOR_JEFE_CONNECTION_FACTORY=object(),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
+    )
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "5", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+    assert response.status_code == 200
+    assert [item["cluster_id"] for item in payloads[0]["candidates"]] == [2, 3]
+    assert b"Relevant" in response.data
 
 
 def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatch):
@@ -172,15 +371,18 @@ def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatc
     for name, value in (("obtener_recientes_por_cluster", {7: {}}),
                         ("obtener_keywords_por_cluster", {7: []}), ("obtener_prioridades", [])):
         monkeypatch.setattr(feature, name, loader(value))
-    monkeypatch.setattr(feature, "calcular_score_editorial", lambda *_: {"score_final": 9})
+    monkeypatch.setattr(feature, "calcular_score_editorial", lambda *_: {"score_final": 51})
     monkeypatch.setattr(panel, "obtener_keywords_por_clusters_ids",
                         lambda used, _ids: (seams.append(used) or {7: ["mapped"]}))
     client = type("Client", (), {"select": lambda _, payload:
                   (payloads.append(json.loads(payload)) or {"selections": []})})
     panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=feature.build_editorial_context,
         EDITOR_JEFE_CONNECTION_FACTORY=factory, EDITOR_JEFE_CLIENT_FACTORY=client)
-    response = panel.app.test_client().post("/editor-jefe-ia", data={"maximum": "1"})
-    assert response.status_code == 200 and b"valid outcome" in response.data
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+    assert response.status_code == 200 and b"resultado v\xc3\xa1lido" in response.data
     assert factory_calls == [True] and seams == [conn] * 4
     assert payloads[0]["candidates"][0]["title"] == "Mapped cluster"
 
@@ -193,7 +395,7 @@ def test_failure_observability_uses_safe_categories_only(caplog):
         lambda: feature.OpenRouterSelectionClient(
             post=lambda *_a, **_k: (_ for _ in ()).throw(
                 feature.requests.ConnectionError("sensitive provider exception")),
-            api_key="secret-key", models=("one",)).select("secret prompt"),
+            api_key="secret-key", models=("one",), sleep=lambda _: None).select("secret prompt"),
     )
     with caplog.at_level("WARNING"):
         for failure in failures:
@@ -201,7 +403,10 @@ def test_failure_observability_uses_safe_categories_only(caplog):
                 failure()
         panel.app.config["EDITOR_JEFE_CONTEXT_BUILDER"] = lambda *_: (_ for _ in ()).throw(
             RuntimeError("sensitive context exception"))
-        panel.app.test_client().post("/editor-jefe-ia", data={"maximum": "1"})
+        panel.app.test_client().post(
+            "/editor-jefe-ia",
+            data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+        )
     log_text = " ".join(record.getMessage() for record in caplog.records)
     assert all(name in log_text for name in ("payload_failure", "validation_failure",
         "provider_failure", "context_failure"))
@@ -214,8 +419,14 @@ def test_post_zero_and_failures_show_no_partial_recommendation():
     client = panel.app.test_client()
     panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [],
                             EDITOR_JEFE_CONNECTION_FACTORY=object())
-    zero = client.post("/editor-jefe-ia", data={"maximum": "2"})
-    assert zero.status_code == 200 and b"No eligible clusters" in zero.data
-    invalid = client.post("/editor-jefe-ia", data={"maximum": "0"})
-    assert invalid.status_code == 200 and b"Please try again" in invalid.data
-    assert b"AI recommendation" not in invalid.data
+    zero = client.post(
+        "/editor-jefe-ia",
+        data={"maximum": "2", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+    assert zero.status_code == 200 and b"No se encontraron clusters elegibles" in zero.data
+    invalid = client.post(
+        "/editor-jefe-ia",
+        data={"maximum": "0", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+    assert invalid.status_code == 200 and b"n\xc3\xbamero entero positivo" in invalid.data
+    assert b"Recomendaci" not in invalid.data

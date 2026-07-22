@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -13,33 +13,39 @@
         <a class="nav-link active" href="{{ url_for('editor_jefe_ia') }}">Editor Jefe IA</a>
       </nav>
       <h2>Editor Jefe IA</h2>
-      <p class="text-muted">Request a read-only AI shortlist. Refreshing or navigating away does not preserve it.</p>
+      <p class="text-muted">Elegí cuántos candidatos mejor rankeados debe procesar la IA y el score editorial mínimo requerido. Puede recomendar cualquier subconjunto relevante, incluso ninguno. Si recargás la página o navegás a otra pestaña, el resultado no se conserva.</p>
       <form method="post" class="card card-body mb-4">
-        <label class="form-label" for="maximum">Maximum candidates</label>
+        <label class="form-label" for="maximum">Cantidad de candidatos a procesar</label>
         <input class="form-control mb-3" id="maximum" name="maximum" type="number" min="1" step="1" required value="{{ maximum }}" />
-        <button class="btn btn-primary" type="submit">Request recommendation</button>
+        <label class="form-label" for="minimum_editorial_score">Score editorial mínimo</label>
+        <input class="form-control mb-3" id="minimum_editorial_score" name="minimum_editorial_score" type="number" min="1" step="1" required value="{{ minimum_editorial_score }}" />
+        <button class="btn btn-primary" type="submit">Solicitar recomendación</button>
       </form>
 
       {% if state == 'idle' %}
-        <div class="alert alert-secondary">No recommendation has been requested.</div>
+        <div class="alert alert-secondary">Todavía no se solicitó ninguna recomendación.</div>
+      {% elif state == 'invalid-maximum' %}
+        <div class="alert alert-danger">Debés ingresar un número entero positivo.</div>
       {% elif state == 'error' %}
-        <div class="alert alert-danger">The recommendation could not be completed. Please try again.</div>
+        <div class="alert alert-danger">No se pudo completar la recomendación. Probá de nuevo.</div>
+      {% elif state == 'invalid-minimum-score' %}
+        <div class="alert alert-danger">Debés ingresar un número entero positivo para el score editorial.</div>
       {% elif state == 'capacity' %}
-        <div class="alert alert-warning">There are too many eligible clusters to send complete context safely. No AI request was made; please try again later.</div>
+        <div class="alert alert-warning">El lote solicitado es demasiado grande para enviarlo de forma segura. No se hizo ninguna solicitud a la IA; pedí menos candidatos.</div>
       {% elif state == 'no-eligible' %}
-        <div class="alert alert-info">No eligible clusters were found in the preceding three days.</div>
+        <div class="alert alert-info">No se encontraron clusters elegibles en los últimos tres días.</div>
       {% elif state == 'zero' %}
-        <div class="alert alert-info">The AI recommendation selected no clusters. This is a valid outcome.</div>
+        <div class="alert alert-info">La recomendación de la IA no seleccionó ningún cluster. Es un resultado válido.</div>
       {% elif state == 'recommendation' %}
-        <h3 class="h5 mb-3">AI recommendation</h3>
+        <h3 class="h5 mb-3">Recomendación de la IA</h3>
         {% for item in selections %}
           <article class="card mb-3"><div class="card-body">
             <h4 class="h6">{{ item.title }}</h4>
             <p class="mb-2">{{ item.reason }}</p>
             <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
-            <span class="badge bg-secondary">Technical {{ item.technical_score }}</span>
-            <span class="badge bg-light text-dark">{{ item.news_count }} news / {{ item.source_count }} sources</span>
-            <a class="btn btn-sm btn-outline-primary float-end" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">View cluster</a>
+            <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
+            <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+            <a class="btn btn-sm btn-outline-primary float-end" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
           </div></article>
         {% endfor %}
       {% endif %}

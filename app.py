@@ -38,7 +38,7 @@ from PIL import Image
 from seleccionar_publicables import get_connection, generar_candidatos
 from editor_jefe_ia import (
     FeatureError, OpenRouterSelectionClient, build_editorial_context, parse_maximum,
-    record_context_failure, select_recommendations,
+    parse_minimum_editorial_score, record_context_failure, select_recommendations,
 )
 import publicador
 import publicapress
@@ -499,16 +499,22 @@ def index():
 
 @app.route("/editor-jefe-ia", methods=["GET", "POST"])
 def editor_jefe_ia():
-    state, selections, maximum = "idle", [], ""
+    state, selections, maximum, minimum_editorial_score = "idle", [], "", "50"
     if request.method == "POST":
         maximum = request.form.get("maximum", "")
+        minimum_editorial_score = request.form.get("minimum_editorial_score", "50")
         try:
             parsed_maximum = parse_maximum(maximum)
+            parsed_minimum_score = parse_minimum_editorial_score(minimum_editorial_score)
             builder = app.config.get("EDITOR_JEFE_CONTEXT_BUILDER", build_editorial_context)
             connection_factory = app.config.get(
                 "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
             )
-            candidates = builder(connection_factory, obtener_keywords_por_clusters_ids)
+            candidates = [
+                candidate
+                for candidate in builder(connection_factory, obtener_keywords_por_clusters_ids)
+                if candidate["editorial_score"] > parsed_minimum_score
+            ]
             if candidates:
                 client_factory = app.config.get(
                     "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
@@ -520,7 +526,14 @@ def editor_jefe_ia():
             else:
                 state = "no-eligible"
         except FeatureError as error:
-            state = "capacity" if error.code == "payload_failure" else "error"
+            if error.code == "input_failure":
+                state = "invalid-maximum"
+            elif error.code == "minimum_score_failure":
+                state = "invalid-minimum-score"
+            elif error.code == "payload_failure":
+                state = "capacity"
+            else:
+                state = "error"
             selections = []
         except Exception:
             record_context_failure()
@@ -528,6 +541,7 @@ def editor_jefe_ia():
     response = make_response(render_template(
         "panel_editor_jefe_ia.html", state=state,
         selections=selections, maximum=maximum,
+        minimum_editorial_score=minimum_editorial_score,
     ))
     response.headers["Cache-Control"] = "no-store, private"
     return response
