@@ -1,0 +1,221 @@
+import json
+from datetime import datetime, timezone
+
+import pytest
+
+import editor_jefe_ia as feature
+
+
+def candidate(cluster_id=1, title="Cluster", newest_at="2026-03-06T12:00:00+00:00"):
+    return {
+        "cluster_id": cluster_id, "title": title, "technical_score": 4.0,
+        "editorial_score": 8.0, "news_count": 3, "source_count": 2,
+        "newest_at": newest_at, "keywords": ["economía"],
+        "recent_news": [{"title": "Nota", "source": "Medio",
+                         "effective_at": newest_at, "excerpt": "Contexto"}],
+    }
+
+
+@pytest.mark.parametrize("raw", [None, "", "0", "-1", "1.5", " 1", "1 ", "true", True])
+def test_maximum_rejects_non_positive_whole_numbers(raw):
+    with pytest.raises(feature.FeatureError):
+        feature.parse_maximum(raw)
+
+
+def test_maximum_accepts_positive_whole_number_without_product_cap():
+    assert feature.parse_maximum("999999") == 999999
+
+
+def test_prompt_is_compact_stable_complete_and_budgeted():
+    item = candidate()
+    prompt = feature.serialize_selection_payload([item], 2)
+    assert prompt == json.dumps(
+        {"candidates": [item], "maximum": 2}, ensure_ascii=False,
+        sort_keys=True, separators=(",", ":"),
+    )
+    base = len(feature.serialize_selection_payload([candidate(title="")], 1).encode())
+    assert len(feature.serialize_selection_payload(
+        [candidate(title="x" * (48_000 - base))], 1).encode()) == 48_000
+    with pytest.raises(feature.FeatureError):
+        feature.serialize_selection_payload(
+            [candidate(title="x" * (48_001 - base))], 1
+        )
+    candidates = [candidate(cluster_id=index) for index in range(528)]
+    client = type("Client", (), {"select": lambda *_: pytest.fail("provider called")})()
+    with pytest.raises(feature.FeatureError) as error:
+        feature.select_recommendations(candidates, 10, client)
+    assert error.value.code == "payload_failure"
+
+
+@pytest.mark.parametrize("body", [
+    None, [], {}, {"selections": [], "extra": 1},
+    {"selections": [{}]}, {"selections": [{"cluster_id": True, "reason": "ok"}]},
+    {"selections": [{"cluster_id": "1", "reason": "ok"}]},
+    {"selections": [{"cluster_id": 9, "reason": "ok"}]},
+    {"selections": [{"cluster_id": 1, "reason": "ok"}, {"cluster_id": 1, "reason": "again"}]},
+    {"selections": [{"cluster_id": 1, "reason": " "}]},
+    {"selections": [{"cluster_id": 1, "reason": "bad\nreason"}]},
+    {"selections": [{"cluster_id": 1, "reason": "x" * 241}]},
+])
+def test_validation_fails_closed(body):
+    with pytest.raises(feature.FeatureError):
+        feature.validate_selection_response(body, [candidate()], 1)
+
+
+def test_validation_enforces_ceiling_and_restores_server_order():
+    candidates = [candidate(2, newest_at="2026-03-06T13:00:00+00:00"), candidate(1)]
+    body = {"selections": [{"cluster_id": 1, "reason": " second "},
+                            {"cluster_id": 2, "reason": "first"}]}
+    with pytest.raises(feature.FeatureError):
+        feature.validate_selection_response(body, candidates, 1)
+    result = feature.validate_selection_response(body, candidates, 2)
+    assert [item["cluster_id"] for item in result] == [2, 1]
+    assert result[1]["reason"] == "second"
+
+
+def test_openrouter_client_uses_fixed_policy_and_bounded_allowance():
+    calls = []
+
+    class Response:
+        ok = True
+        def json(self):
+            return {"choices": [{"message": {"content": '{"selections":[]}'}}]}
+
+    def post(url, **kwargs):
+        calls.append((url, kwargs)); return Response()
+
+    client = feature.OpenRouterSelectionClient(post=post, api_key="secret", models=("one", "two"))
+    assert client.select("{}") == {"selections": []}
+    request = calls[0][1]["json"]
+    assert request["messages"][0]["content"] == feature.EDITOR_JEFE_SYSTEM_PROMPT
+    assert request["max_tokens"] == 1200
+    assert request["response_format"] == {"type": "json_object"}
+
+
+def test_openrouter_missing_choice_fails_as_generic_feature_error():
+    class Response:
+        ok = True
+        def json(self):
+            return {"choices": []}
+    client = feature.OpenRouterSelectionClient(
+        post=lambda *args, **kwargs: Response(), api_key="secret", models=("one",)
+    )
+    with pytest.raises(feature.FeatureError):
+        client.select("{}")
+
+
+def test_get_and_post_are_response_only_and_use_injected_dependencies(monkeypatch):
+    import app as panel
+    calls = []
+    candidates = [candidate()]
+
+    def builder(factory, keyword_loader):
+        calls.append((factory, keyword_loader)); return candidates
+
+    class Client:
+        def select(self, payload):
+            return {"selections": [{"cluster_id": 1, "reason": "Relevant"}]}
+
+    factory = object()
+    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONNECTION_FACTORY=factory,
+                            EDITOR_JEFE_CONTEXT_BUILDER=builder,
+                            EDITOR_JEFE_CLIENT_FACTORY=lambda: Client())
+    client = panel.app.test_client()
+    get_response = client.get("/editor-jefe-ia")
+    assert get_response.status_code == 200 and calls == []
+    response = client.post("/editor-jefe-ia", data={"maximum": "1"})
+    assert response.status_code == 200
+    assert "no-store" in response.headers["Cache-Control"]
+    assert "no-store" in get_response.headers["Cache-Control"]
+    assert calls == [(factory, panel.obtener_keywords_por_clusters_ids)]
+    assert b"Relevant" in response.data and b"AI recommendation" in response.data
+    assert "Location" not in response.headers
+    assert response.headers.getlist("Set-Cookie") == []
+    assert b"Relevant" not in client.get("/editor-jefe-ia").data
+
+
+def test_provider_and_response_failures_render_only_retryable_error():
+    import app as panel
+
+    class BrokenClient:
+        def select(self, payload):
+            raise feature.FeatureError("provider detail")
+
+    class InvalidClient:
+        def select(self, payload):
+            return {"selections": [{"cluster_id": 999, "reason": "unknown"}]}
+
+    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate()],
+                            EDITOR_JEFE_CONNECTION_FACTORY=object())
+    for provider in (lambda: BrokenClient(), lambda: InvalidClient()):
+        panel.app.config["EDITOR_JEFE_CLIENT_FACTORY"] = provider
+        response = panel.app.test_client().post("/editor-jefe-ia", data={"maximum": "1"})
+        assert response.status_code == 200
+        assert b"Please try again" in response.data
+        assert b"provider detail" not in response.data and b"unknown" not in response.data
+        assert b"AI recommendation" not in response.data
+
+
+def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatch):
+    import app as panel
+    now = datetime(2026, 3, 7, 12, tzinfo=timezone.utc)
+    row = {"cluster_id": 7, "titulo_representativo": "Mapped cluster",
+           "cantidad_noticias": 2, "cantidad_fuentes": 2, "technical_score": 1.0,
+           "tendencia": 0, "primera_noticia": now, "ultima_noticia": now,
+           "ultima_publicacion": None, "newest_at": now}
+    conn = type("Connection", (), {"close": lambda self: None})()
+    factory_calls, seams, payloads = [], [], []
+    factory = lambda: (factory_calls.append(True) or conn)
+    loader = lambda value: lambda used: (seams.append(used) or value)
+    monkeypatch.setattr(feature, "_load_eligible_clusters", lambda _conn: [row])
+    monkeypatch.setattr(feature, "_load_recent_news", lambda _conn, _ids: [])
+    for name, value in (("obtener_recientes_por_cluster", {7: {}}),
+                        ("obtener_keywords_por_cluster", {7: []}), ("obtener_prioridades", [])):
+        monkeypatch.setattr(feature, name, loader(value))
+    monkeypatch.setattr(feature, "calcular_score_editorial", lambda *_: {"score_final": 9})
+    monkeypatch.setattr(panel, "obtener_keywords_por_clusters_ids",
+                        lambda used, _ids: (seams.append(used) or {7: ["mapped"]}))
+    client = type("Client", (), {"select": lambda _, payload:
+                  (payloads.append(json.loads(payload)) or {"selections": []})})
+    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=feature.build_editorial_context,
+        EDITOR_JEFE_CONNECTION_FACTORY=factory, EDITOR_JEFE_CLIENT_FACTORY=client)
+    response = panel.app.test_client().post("/editor-jefe-ia", data={"maximum": "1"})
+    assert response.status_code == 200 and b"valid outcome" in response.data
+    assert factory_calls == [True] and seams == [conn] * 4
+    assert payloads[0]["candidates"][0]["title"] == "Mapped cluster"
+
+
+def test_failure_observability_uses_safe_categories_only(caplog):
+    import app as panel
+    failures = (
+        lambda: feature.serialize_selection_payload([candidate(title="secret prompt" * 5000)], 1),
+        lambda: feature.validate_selection_response({"secret output": "raw"}, [candidate()], 1),
+        lambda: feature.OpenRouterSelectionClient(
+            post=lambda *_a, **_k: (_ for _ in ()).throw(
+                feature.requests.ConnectionError("sensitive provider exception")),
+            api_key="secret-key", models=("one",)).select("secret prompt"),
+    )
+    with caplog.at_level("WARNING"):
+        for failure in failures:
+            with pytest.raises(feature.FeatureError):
+                failure()
+        panel.app.config["EDITOR_JEFE_CONTEXT_BUILDER"] = lambda *_: (_ for _ in ()).throw(
+            RuntimeError("sensitive context exception"))
+        panel.app.test_client().post("/editor-jefe-ia", data={"maximum": "1"})
+    log_text = " ".join(record.getMessage() for record in caplog.records)
+    assert all(name in log_text for name in ("payload_failure", "validation_failure",
+        "provider_failure", "context_failure"))
+    assert all(secret not in log_text for secret in ("secret prompt", "raw", "secret-key",
+        "sensitive provider", "sensitive context"))
+
+
+def test_post_zero_and_failures_show_no_partial_recommendation():
+    import app as panel
+    client = panel.app.test_client()
+    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [],
+                            EDITOR_JEFE_CONNECTION_FACTORY=object())
+    zero = client.post("/editor-jefe-ia", data={"maximum": "2"})
+    assert zero.status_code == 200 and b"No eligible clusters" in zero.data
+    invalid = client.post("/editor-jefe-ia", data={"maximum": "0"})
+    assert invalid.status_code == 200 and b"Please try again" in invalid.data
+    assert b"AI recommendation" not in invalid.data

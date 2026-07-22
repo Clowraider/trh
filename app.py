@@ -31,10 +31,15 @@ from flask import (
     redirect,
     url_for,
     flash,
-    jsonify
+    jsonify,
+    make_response
 )
 from PIL import Image
 from seleccionar_publicables import get_connection, generar_candidatos
+from editor_jefe_ia import (
+    FeatureError, OpenRouterSelectionClient, build_editorial_context, parse_maximum,
+    record_context_failure, select_recommendations,
+)
 import publicador
 import publicapress
 
@@ -490,6 +495,42 @@ def index():
         orden_actual=orden_actual,
         ahora=datetime.now()
     )
+
+
+@app.route("/editor-jefe-ia", methods=["GET", "POST"])
+def editor_jefe_ia():
+    state, selections, maximum = "idle", [], ""
+    if request.method == "POST":
+        maximum = request.form.get("maximum", "")
+        try:
+            parsed_maximum = parse_maximum(maximum)
+            builder = app.config.get("EDITOR_JEFE_CONTEXT_BUILDER", build_editorial_context)
+            connection_factory = app.config.get(
+                "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
+            )
+            candidates = builder(connection_factory, obtener_keywords_por_clusters_ids)
+            if candidates:
+                client_factory = app.config.get(
+                    "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
+                )
+                selections = select_recommendations(
+                    candidates, parsed_maximum, client_factory()
+                )
+                state = "recommendation" if selections else "zero"
+            else:
+                state = "no-eligible"
+        except FeatureError as error:
+            state = "capacity" if error.code == "payload_failure" else "error"
+            selections = []
+        except Exception:
+            record_context_failure()
+            state, selections = "error", []
+    response = make_response(render_template(
+        "panel_editor_jefe_ia.html", state=state,
+        selections=selections, maximum=maximum,
+    ))
+    response.headers["Cache-Control"] = "no-store, private"
+    return response
 
 
 @app.route("/reportes/calidad")

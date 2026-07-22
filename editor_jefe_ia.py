@@ -1,4 +1,14 @@
-"""Read-only context assembly for the Editor Jefe IA recommendation flow."""
+"""Read-only context assembly and selection for Editor Jefe IA."""
+
+import json
+import logging
+import os
+import re
+import unicodedata
+
+import requests
+
+logger = logging.getLogger(__name__)
 
 from pipeline.seleccionar_publicables import (
     calcular_score_editorial,
@@ -156,3 +166,112 @@ def build_editorial_context(connection_factory, panel_keywords_loader):
         return candidates
     finally:
         conn.close()
+
+EDITOR_JEFE_SYSTEM_PROMPT = (
+    "You are an advisory Editor-in-Chief. Select zero or more supplied cluster IDs "
+    "up to the requested maximum using all supplied context. Never imply approval or "
+    "trigger actions. Return only JSON: {\"selections\":[{\"cluster_id\":1,"
+    "\"reason\":\"concise reason\"}]}"
+)
+PAYLOAD_BYTE_LIMIT = 48_000
+RESPONSE_TOKEN_LIMIT = 1_200
+
+
+class FeatureError(Exception):
+    """Safe feature failure boundary with a non-sensitive category."""
+
+    def __init__(self, message, code="feature_failure"):
+        super().__init__(message)
+        self.code = code
+
+
+def _failure(code, message):
+    logger.warning("editor_jefe.%s", code)
+    return FeatureError(message, code)
+
+
+def record_context_failure():
+    logger.warning("editor_jefe.context_failure")
+
+
+def parse_maximum(raw):
+    if not isinstance(raw, str) or not re.fullmatch(r"[1-9]\d*", raw):
+        raise FeatureError("A positive whole number is required", "input_failure")
+    return int(raw)
+
+
+def serialize_selection_payload(candidates, maximum):
+    payload = json.dumps(
+        {"candidates": candidates, "maximum": maximum}, ensure_ascii=False,
+        sort_keys=True, separators=(",", ":"),
+    )
+    if len(payload.encode("utf-8")) > PAYLOAD_BYTE_LIMIT:
+        raise _failure("payload_failure", "Selection request is too large")
+    return payload
+
+
+def validate_selection_response(body, candidates, maximum):
+    def invalid():
+        return _failure("validation_failure", "Invalid selection response")
+
+    if not isinstance(body, dict) or set(body) != {"selections"}:
+        raise invalid()
+    selections = body["selections"]
+    if not isinstance(selections, list) or len(selections) > min(maximum, len(candidates)):
+        raise invalid()
+    eligible = {item["cluster_id"]: item for item in candidates}
+    reasons = {}
+    for selection in selections:
+        if not isinstance(selection, dict) or set(selection) != {"cluster_id", "reason"}:
+            raise invalid()
+        cluster_id, reason = selection["cluster_id"], selection["reason"]
+        if (isinstance(cluster_id, bool) or not isinstance(cluster_id, int)
+                or cluster_id not in eligible or cluster_id in reasons
+                or not isinstance(reason, str)):
+            raise invalid()
+        reason = reason.strip()
+        if (not reason or len(reason) > 240
+                or any(unicodedata.category(char) == "Cc" for char in reason)):
+            raise invalid()
+        reasons[cluster_id] = reason
+    return [{**item, "reason": reasons[item["cluster_id"]]}
+            for item in candidates if item["cluster_id"] in reasons]
+
+
+class OpenRouterSelectionClient:
+    def __init__(self, post=requests.post, api_key=None, models=None):
+        self.post = post
+        self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
+        self.models = models or (
+            os.getenv("OPENROUTER_MODEL_PRIMARY", "openrouter/free"),
+            os.getenv("OPENROUTER_MODEL_FALLBACK", "deepseek/deepseek-v4-flash"),
+        )
+        self.url = os.getenv(
+            "OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions"
+        )
+
+    def select(self, payload):
+        if not self.api_key:
+            raise _failure("provider_failure", "Selection provider unavailable")
+        for model in self.models:
+            try:
+                response = self.post(
+                    self.url, headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={"model": model, "messages": [
+                        {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
+                        {"role": "user", "content": payload},
+                    ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
+                          "response_format": {"type": "json_object"}}, timeout=70,
+                )
+                if not response.ok:
+                    continue
+                content = response.json()["choices"][0]["message"]["content"]
+                return json.loads(content)
+            except (IndexError, KeyError, TypeError, ValueError, requests.RequestException):
+                continue
+        raise _failure("provider_failure", "Selection provider unavailable")
+
+
+def select_recommendations(candidates, maximum, client):
+    payload = serialize_selection_payload(candidates, maximum)
+    return validate_selection_response(client.select(payload), candidates, maximum)
