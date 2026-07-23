@@ -387,6 +387,22 @@ CREATE INDEX clusters_embedding_idx ON public.clusters_editoriales USING hnsw (e
 
 CREATE INDEX idx_clusters_estado_pub ON public.clusters_editoriales USING btree (estado_publicacion);
 
+CREATE TABLE "public"."editor_jefe_ia_recommendations" (
+    "cluster_id" bigint NOT NULL,
+    "title" text NOT NULL,
+    "reason" text NOT NULL,
+    "editorial_score" double precision NOT NULL,
+    "technical_score" double precision NOT NULL,
+    "news_count" integer NOT NULL,
+    "source_count" integer NOT NULL,
+    "newest_at" timestamp with time zone NOT NULL,
+    "recommended_at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "editor_jefe_ia_recommendations_pkey" PRIMARY KEY ("cluster_id"),
+    CONSTRAINT "editor_jefe_ia_recommendations_cluster_id_fkey" FOREIGN KEY ("cluster_id") REFERENCES "public"."clusters_editoriales"("id") ON DELETE CASCADE
+) WITH (oids = false);
+
+CREATE INDEX idx_editor_jefe_ia_recommendations_recommended_at ON public.editor_jefe_ia_recommendations USING btree (recommended_at DESC);
+
 
 CREATE SEQUENCE keywords_prioridad_id_seq INCREMENT 1 MINVALUE 1 MAXVALUE 9223372036854775807 CACHE 1;
 

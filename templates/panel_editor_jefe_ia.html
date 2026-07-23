@@ -13,7 +13,7 @@
         <a class="nav-link active" href="{{ url_for('editor_jefe_ia') }}">Editor Jefe IA</a>
       </nav>
       <h2>Editor Jefe IA</h2>
-      <p class="text-muted">Elegí cuántos candidatos mejor rankeados debe procesar la IA y el score editorial mínimo requerido. Puede recomendar cualquier subconjunto relevante, incluso ninguno. Si recargás la página o navegás a otra pestaña, el resultado no se conserva.</p>
+      <p class="text-muted">Elegí cuántos candidatos mejor rankeados debe procesar la IA y el score editorial mínimo requerido. Las propuestas aceptadas quedan guardadas y no se vuelven a procesar en corridas futuras. Puede recomendar cualquier subconjunto relevante, incluso ninguno.</p>
       <form method="post" class="card card-body mb-4">
         <label class="form-label" for="maximum">Cantidad de candidatos a procesar</label>
         <input class="form-control mb-3" id="maximum" name="maximum" type="number" min="1" step="1" required value="{{ maximum }}" />
@@ -37,17 +37,54 @@
       {% elif state == 'zero' %}
         <div class="alert alert-info">La recomendación de la IA no seleccionó ningún cluster. Es un resultado válido.</div>
       {% elif state == 'recommendation' %}
-        <h3 class="h5 mb-3">Recomendación de la IA</h3>
+        <h3 class="h5 mb-3">Nuevas recomendaciones de esta ejecución</h3>
         {% for item in selections %}
           <article class="card mb-3"><div class="card-body">
-            <h4 class="h6">{{ item.title }}</h4>
-            <p class="mb-2">{{ item.reason }}</p>
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div>
+                <h4 class="h6">{{ item.title }}</h4>
+                <p class="mb-2">{{ item.reason }}</p>
+              </div>
+              <div class="d-flex gap-2">
+                <form method="post" action="{{ url_for('descartar_cluster', cluster_id=item.cluster_id) }}" onsubmit="return confirm('¿Descartar este candidato?');">
+                  <input type="hidden" name="return_to" value="editor_jefe_ia" />
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Descartar</button>
+                </form>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
+              </div>
+            </div>
             <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
             <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
             <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
-            <a class="btn btn-sm btn-outline-primary float-end" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
           </div></article>
         {% endfor %}
+      {% endif %}
+
+      {% if saved_recommendations %}
+        <section class="mt-4">
+          <h3 class="h5 mb-3">Propuestas guardadas</h3>
+          <p class="text-muted">Estos clusters ya fueron recomendados por Editor Jefe IA y no se vuelven a procesar en ejecuciones futuras.</p>
+          {% for item in saved_recommendations %}
+            <article class="card mb-3"><div class="card-body">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <h4 class="h6">{{ item.title }}</h4>
+                  <p class="mb-2">{{ item.reason }}</p>
+                </div>
+                <div class="d-flex gap-2">
+                  <form method="post" action="{{ url_for('descartar_cluster', cluster_id=item.cluster_id) }}" onsubmit="return confirm('¿Descartar este candidato?');">
+                    <input type="hidden" name="return_to" value="editor_jefe_ia" />
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Descartar</button>
+                  </form>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
+                </div>
+              </div>
+              <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
+              <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
+              <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+            </div></article>
+          {% endfor %}
+        </section>
       {% endif %}
     </main>
   </body>

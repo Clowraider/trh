@@ -180,6 +180,59 @@ EDITOR_JEFE_SYSTEM_PROMPT = (
 PAYLOAD_BYTE_LIMIT = 48_000
 RESPONSE_TOKEN_LIMIT = 1_200
 
+_RECOMMENDATIONS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS editor_jefe_ia_recommendations (
+    cluster_id bigint PRIMARY KEY REFERENCES clusters_editoriales(id) ON DELETE CASCADE,
+    title text NOT NULL,
+    reason text NOT NULL,
+    editorial_score double precision NOT NULL,
+    technical_score double precision NOT NULL,
+    news_count integer NOT NULL,
+    source_count integer NOT NULL,
+    newest_at timestamptz NOT NULL,
+    recommended_at timestamptz NOT NULL DEFAULT NOW()
+)
+"""
+
+_RECOMMENDATIONS_INDEX_SQL = """
+CREATE INDEX IF NOT EXISTS idx_editor_jefe_ia_recommendations_recommended_at
+ON editor_jefe_ia_recommendations (recommended_at DESC)
+"""
+
+_LOAD_RECOMMENDATIONS_SQL = """
+SELECT
+    cluster_id,
+    title,
+    reason,
+    editorial_score,
+    technical_score,
+    news_count,
+    source_count,
+    newest_at,
+    recommended_at
+FROM editor_jefe_ia_recommendations
+ORDER BY recommended_at DESC, cluster_id DESC
+"""
+
+_SAVE_RECOMMENDATION_SQL = """
+INSERT INTO editor_jefe_ia_recommendations (
+    cluster_id,
+    title,
+    reason,
+    editorial_score,
+    technical_score,
+    news_count,
+    source_count,
+    newest_at
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::timestamptz)
+ON CONFLICT (cluster_id) DO NOTHING
+"""
+
+_DELETE_RECOMMENDATION_SQL = """
+DELETE FROM editor_jefe_ia_recommendations
+WHERE cluster_id = %s
+"""
+
 
 class FeatureError(Exception):
     """Safe feature failure boundary with a non-sensitive category."""
@@ -307,6 +360,61 @@ class OpenRouterSelectionClient:
                     )
                     self.sleep(2 * attempt)
         raise _failure("provider_failure", "Selection provider unavailable")
+
+
+def _ensure_recommendations_storage(conn):
+    with conn.cursor() as cursor:
+        cursor.execute(_RECOMMENDATIONS_TABLE_SQL)
+        cursor.execute(_RECOMMENDATIONS_INDEX_SQL)
+    conn.commit()
+
+
+def load_saved_recommendations(connection_factory):
+    conn = connection_factory()
+    try:
+        _ensure_recommendations_storage(conn)
+        with conn.cursor() as cursor:
+            cursor.execute(_LOAD_RECOMMENDATIONS_SQL)
+            return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def save_recommendations(connection_factory, selections):
+    if not selections:
+        return
+    conn = connection_factory()
+    try:
+        _ensure_recommendations_storage(conn)
+        with conn.cursor() as cursor:
+            for item in selections:
+                cursor.execute(
+                    _SAVE_RECOMMENDATION_SQL,
+                    (
+                        item["cluster_id"],
+                        item["title"],
+                        item["reason"],
+                        item["editorial_score"],
+                        item["technical_score"],
+                        item["news_count"],
+                        item["source_count"],
+                        item["newest_at"],
+                    ),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_saved_recommendation(connection_factory, cluster_id):
+    conn = connection_factory()
+    try:
+        _ensure_recommendations_storage(conn)
+        with conn.cursor() as cursor:
+            cursor.execute(_DELETE_RECOMMENDATION_SQL, (cluster_id,))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def select_recommendations(candidates, batch_size, client):

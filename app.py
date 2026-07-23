@@ -37,8 +37,10 @@ from flask import (
 from PIL import Image
 from seleccionar_publicables import get_connection, generar_candidatos
 from editor_jefe_ia import (
-    FeatureError, OpenRouterSelectionClient, build_editorial_context, parse_maximum,
-    parse_minimum_editorial_score, record_context_failure, select_recommendations,
+    FeatureError, OpenRouterSelectionClient, build_editorial_context,
+    delete_saved_recommendation, load_saved_recommendations, parse_maximum,
+    parse_minimum_editorial_score, record_context_failure, save_recommendations,
+    select_recommendations,
 )
 import publicador
 import publicapress
@@ -500,48 +502,70 @@ def index():
 @app.route("/editor-jefe-ia", methods=["GET", "POST"])
 def editor_jefe_ia():
     state, selections, maximum, minimum_editorial_score = "idle", [], "", "50"
-    if request.method == "POST":
-        maximum = request.form.get("maximum", "")
-        minimum_editorial_score = request.form.get("minimum_editorial_score", "50")
-        try:
-            parsed_maximum = parse_maximum(maximum)
-            parsed_minimum_score = parse_minimum_editorial_score(minimum_editorial_score)
-            builder = app.config.get("EDITOR_JEFE_CONTEXT_BUILDER", build_editorial_context)
-            connection_factory = app.config.get(
-                "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
-            )
-            candidates = [
-                candidate
-                for candidate in builder(connection_factory, obtener_keywords_por_clusters_ids)
-                if candidate["editorial_score"] > parsed_minimum_score
-            ]
-            if candidates:
-                client_factory = app.config.get(
-                    "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
-                )
-                selections = select_recommendations(
-                    candidates, parsed_maximum, client_factory()
-                )
-                state = "recommendation" if selections else "zero"
-            else:
-                state = "no-eligible"
-        except FeatureError as error:
-            if error.code == "input_failure":
-                state = "invalid-maximum"
-            elif error.code == "minimum_score_failure":
-                state = "invalid-minimum-score"
-            elif error.code == "payload_failure":
-                state = "capacity"
-            else:
-                state = "error"
-            selections = []
-        except Exception:
-            record_context_failure()
-            state, selections = "error", []
+    saved_recommendations = []
+    connection_factory = app.config.get(
+        "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
+    )
+    load_saved = app.config.get(
+        "EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS", load_saved_recommendations
+    )
+    save_saved = app.config.get(
+        "EDITOR_JEFE_SAVE_RECOMMENDATIONS", save_recommendations
+    )
+    try:
+        saved_recommendations = load_saved(connection_factory)
+        if request.method == "POST":
+            maximum = request.form.get("maximum", "")
+            minimum_editorial_score = request.form.get("minimum_editorial_score", "50")
+            try:
+                parsed_maximum = parse_maximum(maximum)
+                parsed_minimum_score = parse_minimum_editorial_score(minimum_editorial_score)
+                builder = app.config.get("EDITOR_JEFE_CONTEXT_BUILDER", build_editorial_context)
+                recommended_ids = {item["cluster_id"] for item in saved_recommendations}
+                candidates = [
+                    candidate
+                    for candidate in builder(connection_factory, obtener_keywords_por_clusters_ids)
+                    if candidate["cluster_id"] not in recommended_ids
+                    and candidate["editorial_score"] >= parsed_minimum_score
+                ]
+                if candidates:
+                    client_factory = app.config.get(
+                        "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
+                    )
+                    selections = select_recommendations(
+                        candidates, parsed_maximum, client_factory()
+                    )
+                    if selections:
+                        try:
+                            save_saved(connection_factory, selections)
+                            saved_recommendations = load_saved(connection_factory)
+                        except Exception:
+                            record_context_failure()
+                            flash(
+                                "La recomendación se generó, pero no se pudo guardar el listado persistente.",
+                                "warning",
+                            )
+                    state = "recommendation" if selections else "zero"
+                else:
+                    state = "no-eligible"
+            except FeatureError as error:
+                if error.code == "input_failure":
+                    state = "invalid-maximum"
+                elif error.code == "minimum_score_failure":
+                    state = "invalid-minimum-score"
+                elif error.code == "payload_failure":
+                    state = "capacity"
+                else:
+                    state = "error"
+                selections = []
+    except Exception:
+        record_context_failure()
+        state, selections, saved_recommendations = "error", [], []
     response = make_response(render_template(
         "panel_editor_jefe_ia.html", state=state,
         selections=selections, maximum=maximum,
         minimum_editorial_score=minimum_editorial_score,
+        saved_recommendations=saved_recommendations,
     ))
     response.headers["Cache-Control"] = "no-store, private"
     return response
@@ -1005,6 +1029,18 @@ def publicar_cluster(cluster_id):
     resultado = publicapress.publicar_cluster(cluster_id)
 
     if resultado["ok"]:
+        delete_saved = app.config.get(
+            "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION", delete_saved_recommendation
+        )
+        try:
+            delete_saved(get_connection, cluster_id)
+        except Exception:
+            record_context_failure()
+            flash(
+                f"✅ Published! → {resultado['url_wp']}. No se pudo limpiar la recomendación guardada.",
+                "warning",
+            )
+            return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
         flash(f"✅ Published! → {resultado['url_wp']}", "success")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
     else:
@@ -1193,7 +1229,17 @@ def descartar_cluster(cluster_id):
     """
     Descarta un cluster para que no aparezca en la lista de candidatos.
     """
+    redirect_endpoint = request.form.get("return_to")
+    redirect_target = (
+        url_for("editor_jefe_ia")
+        if redirect_endpoint == "editor_jefe_ia"
+        else url_for("index")
+    )
+
     conn = get_connection()
+    delete_saved = app.config.get(
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION", delete_saved_recommendation
+    )
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -1204,12 +1250,12 @@ def descartar_cluster(cluster_id):
 
             if not cluster:
                 flash("Cluster no encontrado", "warning")
-                return redirect(url_for('index'))
+                return redirect(redirect_target)
 
             estado_actual = cluster.get('estado_publicacion') or 'pendiente'
             if estado_actual == 'descartado':
                 flash("El cluster ya estaba descartado", "info")
-                return redirect(url_for('index'))
+                return redirect(redirect_target)
 
             cur.execute("""
                 UPDATE clusters_editoriales
@@ -1218,11 +1264,18 @@ def descartar_cluster(cluster_id):
                 WHERE id = %s
             """, (cluster_id,))
         conn.commit()
-        flash("Cluster descartado", "info")
     finally:
         conn.close()
 
-    return redirect(url_for('index'))
+    try:
+        delete_saved(get_connection, cluster_id)
+    except Exception:
+        record_context_failure()
+        flash("Cluster descartado, pero no se pudo limpiar la recomendación guardada.", "warning")
+        return redirect(redirect_target)
+
+    flash("Cluster descartado", "info")
+    return redirect(redirect_target)
 
 
 @app.route("/revertir/<int:cluster_id>", methods=["POST"])

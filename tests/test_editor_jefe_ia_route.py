@@ -24,6 +24,16 @@ def candidate(
     }
 
 
+def configure_panel(panel, **overrides):
+    config = {
+        "TESTING": True,
+        "EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS": lambda *_: [],
+        "EDITOR_JEFE_SAVE_RECOMMENDATIONS": lambda *_: None,
+    }
+    config.update(overrides)
+    panel.app.config.update(**config)
+
+
 @pytest.mark.parametrize("raw", [None, "", "0", "-1", "1.5", " 1", "1 ", "true", True])
 def test_maximum_rejects_non_positive_whole_numbers(raw):
     with pytest.raises(feature.FeatureError):
@@ -207,26 +217,36 @@ def test_openrouter_missing_choice_fails_as_generic_feature_error():
         client.select("{}")
 
 
-def test_get_and_post_are_response_only_and_use_injected_dependencies(monkeypatch):
+def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
     import app as panel
     calls = []
     candidates = [candidate(editorial_score=80)]
+    saved = []
 
     def builder(factory, keyword_loader):
         calls.append((factory, keyword_loader)); return candidates
+
+    def load_saved(_factory):
+        return list(saved)
+
+    def save_saved(_factory, selections):
+        saved.extend(selections)
 
     class Client:
         def select(self, payload):
             return {"selections": [{"cluster_id": 1, "reason": "Relevant"}]}
 
     factory = object()
-    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONNECTION_FACTORY=factory,
-                            EDITOR_JEFE_CONTEXT_BUILDER=builder,
-                            EDITOR_JEFE_CLIENT_FACTORY=lambda: Client())
+    configure_panel(panel, EDITOR_JEFE_CONNECTION_FACTORY=factory,
+                    EDITOR_JEFE_CONTEXT_BUILDER=builder,
+                    EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
+                    EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=load_saved,
+                    EDITOR_JEFE_SAVE_RECOMMENDATIONS=save_saved)
     client = panel.app.test_client()
     get_response = client.get("/editor-jefe-ia")
     assert get_response.status_code == 200 and calls == []
     assert f'value="{DEFAULT_MINIMUM_EDITORIAL_SCORE}"'.encode() in get_response.data
+    assert b"Propuestas guardadas" not in get_response.data
     response = client.post(
         "/editor-jefe-ia",
         data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
@@ -235,10 +255,16 @@ def test_get_and_post_are_response_only_and_use_injected_dependencies(monkeypatc
     assert "no-store" in response.headers["Cache-Control"]
     assert "no-store" in get_response.headers["Cache-Control"]
     assert calls == [(factory, panel.obtener_keywords_por_clusters_ids)]
-    assert b"Relevant" in response.data and b"Recomendaci" in response.data
+    assert b"Relevant" in response.data and b"guardadas" in response.data
+    assert b"Descartar" in response.data
+    assert b"return_to" in response.data
+    assert b"/descartar/1" in response.data
+    assert b"Propuestas guardadas" in response.data
     assert "Location" not in response.headers
     assert response.headers.getlist("Set-Cookie") == []
-    assert b"Relevant" not in client.get("/editor-jefe-ia").data
+    followup_get = client.get("/editor-jefe-ia")
+    assert b"Relevant" in followup_get.data
+    assert b"Propuestas guardadas" in followup_get.data
 
 
 @pytest.mark.parametrize("maximum", ["abc", "1.5", "0", "-1"])
@@ -246,8 +272,8 @@ def test_invalid_maximum_explains_positive_whole_number_without_dependencies(max
     import app as panel
 
     calls = []
-    panel.app.config.update(
-        TESTING=True,
+    configure_panel(
+        panel,
         EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: calls.append("context"),
         EDITOR_JEFE_CLIENT_FACTORY=lambda: calls.append("provider"),
     )
@@ -268,8 +294,8 @@ def test_invalid_minimum_score_explains_positive_whole_number_without_dependenci
     import app as panel
 
     calls = []
-    panel.app.config.update(
-        TESTING=True,
+    configure_panel(
+        panel,
         EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: calls.append("context"),
         EDITOR_JEFE_CLIENT_FACTORY=lambda: calls.append("provider"),
     )
@@ -285,8 +311,8 @@ def test_invalid_minimum_score_explains_positive_whole_number_without_dependenci
 def test_capacity_error_tells_user_to_request_fewer_candidates():
     import app as panel
 
-    panel.app.config.update(
-        TESTING=True,
+    configure_panel(
+        panel,
         EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate(title="x" * 48_000, editorial_score=99)],
     )
     response = panel.app.test_client().post(
@@ -311,8 +337,8 @@ def test_provider_and_response_failures_render_only_retryable_error():
         def select(self, payload):
             return {"selections": [{"cluster_id": 999, "reason": "unknown"}]}
 
-    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate(editorial_score=80)],
-                            EDITOR_JEFE_CONNECTION_FACTORY=object())
+    configure_panel(panel, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [candidate(editorial_score=80)],
+                    EDITOR_JEFE_CONNECTION_FACTORY=object())
     for provider in (lambda: BrokenClient(), lambda: InvalidClient()):
         panel.app.config["EDITOR_JEFE_CLIENT_FACTORY"] = provider
         response = panel.app.test_client().post(
@@ -340,8 +366,8 @@ def test_threshold_filters_candidates_before_provider_call(monkeypatch):
             payloads.append(json.loads(payload))
             return {"selections": [{"cluster_id": 2, "reason": "Relevant"}]}
 
-    panel.app.config.update(
-        TESTING=True,
+    configure_panel(
+        panel,
         EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: candidates,
         EDITOR_JEFE_CONNECTION_FACTORY=object(),
         EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
@@ -351,8 +377,49 @@ def test_threshold_filters_candidates_before_provider_call(monkeypatch):
         data={"maximum": "5", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
     )
     assert response.status_code == 200
-    assert [item["cluster_id"] for item in payloads[0]["candidates"]] == [2, 3]
+    assert [item["cluster_id"] for item in payloads[0]["candidates"]] == [1, 2, 3]
     assert b"Relevant" in response.data
+
+
+def test_saved_recommendations_are_excluded_and_new_ones_are_accumulated():
+    import app as panel
+
+    payloads = []
+    saved = [{**candidate(cluster_id=1, title="Viejo", editorial_score=90), "reason": "Saved"}]
+    candidates = [
+        candidate(cluster_id=1, title="Viejo", editorial_score=90),
+        candidate(cluster_id=2, title="Nuevo", editorial_score=80),
+        candidate(cluster_id=3, title="Otro", editorial_score=70),
+    ]
+
+    def load_saved(_factory):
+        return list(saved)
+
+    def save_saved(_factory, selections):
+        saved.extend(selections)
+
+    class Client:
+        def select(self, payload):
+            payloads.append(json.loads(payload))
+            return {"selections": [{"cluster_id": 2, "reason": "Fresh"}]}
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: candidates,
+        EDITOR_JEFE_CONNECTION_FACTORY=object(),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=load_saved,
+        EDITOR_JEFE_SAVE_RECOMMENDATIONS=save_saved,
+    )
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "5", "minimum_editorial_score": "60"},
+    )
+    assert response.status_code == 200
+    assert [item["cluster_id"] for item in payloads[0]["candidates"]] == [2, 3]
+    assert [item["cluster_id"] for item in saved] == [1, 2]
+    assert b"Viejo" in response.data
+    assert b"Fresh" in response.data
 
 
 def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatch):
@@ -376,7 +443,7 @@ def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatc
                         lambda used, _ids: (seams.append(used) or {7: ["mapped"]}))
     client = type("Client", (), {"select": lambda _, payload:
                   (payloads.append(json.loads(payload)) or {"selections": []})})
-    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=feature.build_editorial_context,
+    configure_panel(panel, EDITOR_JEFE_CONTEXT_BUILDER=feature.build_editorial_context,
         EDITOR_JEFE_CONNECTION_FACTORY=factory, EDITOR_JEFE_CLIENT_FACTORY=client)
     response = panel.app.test_client().post(
         "/editor-jefe-ia",
@@ -414,11 +481,148 @@ def test_failure_observability_uses_safe_categories_only(caplog):
         "sensitive provider", "sensitive context"))
 
 
+def test_descartar_cluster_can_return_to_editor_jefe_ia(monkeypatch):
+    import app as panel
+
+    executed = []
+    removed = []
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+        def fetchone(self):
+            return {"id": 7, "estado_publicacion": "pendiente"}
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+        def commit(self):
+            executed.append(("commit", None))
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda factory, cluster_id: removed.append((factory, cluster_id)),
+    )
+    response = panel.app.test_client().post(
+        "/descartar/7",
+        data={"return_to": "editor_jefe_ia"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/editor-jefe-ia")
+    assert any("UPDATE clusters_editoriales SET estado_publicacion = 'descartado'" in sql for sql, _ in executed if isinstance(sql, str))
+    assert removed == [(panel.get_connection, 7)]
+    assert ("commit", None) in executed
+
+
+def test_publicar_cluster_removes_saved_recommendation_on_success(monkeypatch):
+    import app as panel
+
+    removed = []
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {"id": cluster_id, "estado_publicacion": "generado"},
+    )
+    monkeypatch.setattr(
+        panel.publicapress,
+        "publicar_cluster",
+        lambda cluster_id: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+    )
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda factory, cluster_id: removed.append((factory, cluster_id)),
+    )
+
+    response = panel.app.test_client().post("/publicar/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert removed == [(panel.get_connection, 7)]
+
+
+def test_publicar_cluster_preserves_success_when_cleanup_fails(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {"id": cluster_id, "estado_publicacion": "generado"},
+    )
+    monkeypatch.setattr(
+        panel.publicapress,
+        "publicar_cluster",
+        lambda cluster_id: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+    )
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("cleanup failed")),
+    )
+
+    response = panel.app.test_client().post("/publicar/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+
+
+
+def test_descartar_cluster_preserves_success_when_cleanup_fails(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+        def fetchone(self):
+            return {"id": 7, "estado_publicacion": "pendiente"}
+        def __enter__(self):
+            return self
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+        def commit(self):
+            executed.append(("commit", None))
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("cleanup failed")),
+    )
+
+    response = panel.app.test_client().post(
+        "/descartar/7",
+        data={"return_to": "editor_jefe_ia"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/editor-jefe-ia")
+    assert ("commit", None) in executed
+
+
 def test_post_zero_and_failures_show_no_partial_recommendation():
     import app as panel
     client = panel.app.test_client()
-    panel.app.config.update(TESTING=True, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [],
-                            EDITOR_JEFE_CONNECTION_FACTORY=object())
+    configure_panel(panel, EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: [],
+                    EDITOR_JEFE_CONNECTION_FACTORY=object())
     zero = client.post(
         "/editor-jefe-ia",
         data={"maximum": "2", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
