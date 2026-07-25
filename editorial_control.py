@@ -2,10 +2,12 @@ import logging
 
 import publicador
 
+from prompt_loader import load_json_file, load_prompt_text
+
 
 logger = logging.getLogger(__name__)
 
-EDITORIAL_CONTROL_RULES = [
+DEFAULT_EDITORIAL_CONTROL_RULES = [
     {
         "code": "mentions_other_media",
         "instruction": "No nombres ni cites otros medios de comunicación en el texto final.",
@@ -16,12 +18,58 @@ EDITORIAL_CONTROL_RULES = [
     },
 ]
 
-EDITORIAL_CONTROL_SYSTEM_PROMPT = (
-    "Sos un editor de control de calidad periodística. Evaluá el artículo y devolvé "
-    "EXCLUSIVAMENTE JSON con esta forma exacta: "
-    '{"passed":true,"issues":[],"correction_instructions":""}. '
-    "Si falla, passed debe ser false, issues debe listar los códigos incumplidos y "
-    "correction_instructions debe explicar cómo corregirlo sin inventar hechos."
+
+def validate_editorial_control_rules(rules):
+    if not isinstance(rules, list) or not rules:
+        raise ValueError("Editorial control rules must be a non-empty list")
+
+    normalized_rules = []
+    seen_codes = set()
+    for rule in rules:
+        if not isinstance(rule, dict):
+            raise ValueError("Editorial control rules must contain objects")
+
+        code = rule.get("code")
+        instruction = rule.get("instruction")
+        if not isinstance(code, str) or not code.strip():
+            raise ValueError("Editorial control rule code must be a non-empty string")
+        if not isinstance(instruction, str) or not instruction.strip():
+            raise ValueError(
+                "Editorial control rule instruction must be a non-empty string"
+            )
+
+        normalized_code = code.strip()
+        if normalized_code in seen_codes:
+            raise ValueError("Editorial control rule codes must be unique")
+
+        seen_codes.add(normalized_code)
+        normalized_rules.append(
+            {
+                "code": normalized_code,
+                "instruction": instruction.strip(),
+            }
+        )
+
+    return normalized_rules
+
+
+EDITORIAL_CONTROL_RULES = load_json_file(
+    "EDITORIAL_CONTROL_RULES_FILE",
+    DEFAULT_EDITORIAL_CONTROL_RULES,
+    logger,
+    validator=validate_editorial_control_rules,
+)
+
+EDITORIAL_CONTROL_SYSTEM_PROMPT = load_prompt_text(
+    "EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE",
+    (
+        "Sos un editor de control de calidad periodística. Evaluá el artículo y devolvé "
+        "EXCLUSIVAMENTE JSON con esta forma exacta: "
+        '{"passed":true,"issues":[],"correction_instructions":""}. '
+        "Si falla, passed debe ser false, issues debe listar los códigos incumplidos y "
+        "correction_instructions debe explicar cómo corregirlo sin inventar hechos."
+    ),
+    logger,
 )
 
 

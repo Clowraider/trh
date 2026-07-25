@@ -1,0 +1,10 @@
+[
+  {
+    "code": "mentions_other_media",
+    "instruction": "No nombres ni cites otros medios de comunicación en el texto final."
+  },
+  {
+    "code": "accusatory_tone",
+    "instruction": "Usá un tono neutral, factual y no acusatorio."
+  }
+]

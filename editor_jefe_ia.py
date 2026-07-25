@@ -12,6 +12,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+from prompt_loader import load_prompt_text
+
 from pipeline.seleccionar_publicables import (
     calcular_score_editorial,
     obtener_keywords_por_cluster,
@@ -169,14 +171,18 @@ def build_editorial_context(connection_factory, panel_keywords_loader):
     finally:
         conn.close()
 
-EDITOR_JEFE_SYSTEM_PROMPT = (
-    "You are an advisory Editor-in-Chief for a Spanish-language newsroom. Review the "
-    "complete supplied candidate batch and select any relevant subset of its cluster IDs, "
-    "including none. The batch size limits only the input you receive; it is not a target "
-    "selection count. Exclude weather and forecast items unless they have an extraordinary "
-    "public-interest impact beyond routine conditions. Write every recommendation reason in "
-    "natural Spanish. Never imply approval or trigger actions. Return only JSON: "
-    "{\"selections\":[{\"cluster_id\":1,\"reason\":\"motivo breve en castellano\"}]}"
+EDITOR_JEFE_SYSTEM_PROMPT = load_prompt_text(
+    "EDITOR_JEFE_SYSTEM_PROMPT_FILE",
+    (
+        "You are an advisory Editor-in-Chief for a Spanish-language newsroom. Review the "
+        "complete supplied candidate batch and select any relevant subset of its cluster IDs, "
+        "including none. The batch size limits only the input you receive; it is not a target "
+        "selection count. Exclude weather and forecast items unless they have an extraordinary "
+        "public-interest impact beyond routine conditions. Write every recommendation reason in "
+        "natural Spanish. Never imply approval or trigger actions. Return only JSON: "
+        "{\"selections\":[{\"cluster_id\":1,\"reason\":\"motivo breve en castellano\"}]}"
+    ),
+    logger,
 )
 SELECTION_BATCH_LIMIT = 5
 PAYLOAD_BYTE_LIMIT = 48_000
