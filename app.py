@@ -42,6 +42,7 @@ from editor_jefe_ia import (
     parse_minimum_editorial_score, record_context_failure, save_recommendations,
     select_recommendations,
 )
+from editorial_control import generate_article_with_editorial_control
 import publicador
 import publicapress
 
@@ -77,7 +78,7 @@ def _update_cluster_nota_ia(cluster_id, nota_ia):
         conn.close()
 
 
-def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_states=None):
+def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_states=None, generator=None):
     cluster = cluster or obtener_cluster_db(cluster_id)
     if not cluster:
         return {"status": "missing"}
@@ -93,7 +94,7 @@ def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_st
     if nota_ia is not None and effective_nota_ia != stored_nota_ia:
         _update_cluster_nota_ia(cluster_id, effective_nota_ia)
 
-    generator = app.config.get(
+    generator = generator or app.config.get(
         "EDITOR_JEFE_ARTICLE_GENERATOR", publicador.generar_articulo_para_cluster
     )
     try:
@@ -979,6 +980,10 @@ def generar_articulos_guardados_editor_jefe_ia():
     load_saved = app.config.get(
         "EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS", load_saved_recommendations
     )
+    bulk_generator = app.config.get(
+        "EDITOR_JEFE_BULK_ARTICLE_GENERATOR",
+        generate_article_with_editorial_control,
+    )
 
     try:
         saved_recommendations = load_saved(connection_factory)
@@ -1001,6 +1006,7 @@ def generar_articulos_guardados_editor_jefe_ia():
             cluster_id,
             cluster=obtener_cluster_db(cluster_id),
             allowed_states=('pendiente',),
+            generator=bulk_generator,
         )
         if outcome["status"] == "generated":
             generated += 1

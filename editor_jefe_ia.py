@@ -7,6 +7,7 @@ import re
 import time
 import unicodedata
 
+from psycopg2 import errors as psycopg2_errors
 import requests
 
 logger = logging.getLogger(__name__)
@@ -211,7 +212,26 @@ SELECT
     r.source_count,
     r.newest_at,
     r.recommended_at,
-    COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion
+    COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion,
+    COALESCE(ce.requiere_revision_editorial, FALSE) AS requiere_revision_editorial
+FROM editor_jefe_ia_recommendations r
+LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id
+ORDER BY r.recommended_at DESC, r.cluster_id DESC
+"""
+
+_LOAD_RECOMMENDATIONS_FALLBACK_SQL = """
+SELECT
+    r.cluster_id,
+    r.title,
+    r.reason,
+    r.editorial_score,
+    r.technical_score,
+    r.news_count,
+    r.source_count,
+    r.newest_at,
+    r.recommended_at,
+    COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion,
+    FALSE AS requiere_revision_editorial
 FROM editor_jefe_ia_recommendations r
 LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id
 ORDER BY r.recommended_at DESC, r.cluster_id DESC
@@ -377,7 +397,12 @@ def load_saved_recommendations(connection_factory):
     try:
         _ensure_recommendations_storage(conn)
         with conn.cursor() as cursor:
-            cursor.execute(_LOAD_RECOMMENDATIONS_SQL)
+            try:
+                cursor.execute(_LOAD_RECOMMENDATIONS_SQL)
+            except psycopg2_errors.UndefinedColumn:
+                if hasattr(conn, "rollback"):
+                    conn.rollback()
+                cursor.execute(_LOAD_RECOMMENDATIONS_FALLBACK_SQL)
             return cursor.fetchall()
     finally:
         conn.close()

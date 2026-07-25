@@ -380,6 +380,7 @@ CREATE TABLE "public"."clusters_editoriales" (
     "url_wp" text,
     "fotos_secundarias" jsonb DEFAULT '[]',
     "nota_ia" text,
+    "requiere_revision_editorial" boolean DEFAULT false,
     CONSTRAINT "clusters_editoriales_pkey" PRIMARY KEY ("id")
 ) WITH (oids = false);
 

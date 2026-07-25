@@ -332,9 +332,10 @@ def test_capacity_error_tells_user_to_request_fewer_candidates():
         "/editor-jefe-ia",
         data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
     )
-    assert b"lote solicitado es demasiado grande" in response.data
-    assert b"No se hizo ninguna solicitud a la IA" in response.data
-    assert b"ped\xc3\xad menos candidatos" in response.data
+    assert b"Uno de los lotes solicitados es demasiado grande" in response.data
+    assert b"Prob\xc3\xa1 con menos candidatos" in response.data
+    assert b"No se hizo ninguna solicitud a la IA" not in response.data
+    assert b"ped\xc3\xad menos candidatos" not in response.data
     assert b"too many eligible clusters" not in response.data
     assert b"try again later" not in response.data
 
@@ -626,6 +627,28 @@ def test_saved_recommendations_show_ready_badge_when_cluster_is_generated():
     assert response.data.count("✅ Listo".encode("utf-8")) == 1
 
 
+def test_saved_recommendations_show_editorial_review_badge_when_required():
+    import app as panel
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=lambda _factory: [
+            {
+                **candidate(cluster_id=7, title="Guardado con revisión"),
+                "reason": "Saved",
+                "estado_publicacion": "generado",
+                "requiere_revision_editorial": True,
+            }
+        ],
+    )
+
+    response = panel.app.test_client().get("/editor-jefe-ia")
+
+    assert response.status_code == 200
+    assert b"Guardado con revisi\xc3\xb3n" in response.data
+    assert "⚠️ Requiere revisión editorial".encode("utf-8") in response.data
+
+
 def test_bulk_generation_processes_saved_recommendations_sequentially_and_summarizes(monkeypatch):
     import app as panel
 
@@ -656,7 +679,7 @@ def test_bulk_generation_processes_saved_recommendations_sequentially_and_summar
     configure_panel(
         panel,
         EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=load_saved,
-        EDITOR_JEFE_ARTICLE_GENERATOR=generate,
+        EDITOR_JEFE_BULK_ARTICLE_GENERATOR=generate,
     )
     monkeypatch.setattr(panel, "obtener_cluster_db", lambda cluster_id: clusters.get(cluster_id))
 

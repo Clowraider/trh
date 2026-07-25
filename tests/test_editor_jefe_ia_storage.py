@@ -55,6 +55,7 @@ def test_load_saved_recommendations_ensures_storage_and_returns_rows():
     assert "SELECT r.cluster_id, r.title, r.reason, r.editorial_score" in conn.executed[2][0]
     assert "LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id" in conn.executed[2][0]
     assert "COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion" in conn.executed[2][0]
+    assert "COALESCE(ce.requiere_revision_editorial, FALSE) AS requiere_revision_editorial" in conn.executed[2][0]
 
 
 def test_save_recommendations_ensures_storage_and_inserts_each_selection():

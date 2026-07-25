@@ -19,6 +19,7 @@ Funciones exportadas (las usa app.py / el panel):
 import os
 import logging
 import psycopg2
+from psycopg2 import errors as psycopg2_errors
 import requests
 import json
 import time
@@ -213,7 +214,7 @@ def _validar_contenido_generado(contenido):
         raise ValueError(f"Respuesta IA incompleta. Faltan campos: {', '.join(faltantes)}")
 
 
-def llamar_ia(prompt):
+def llamar_ia_json(prompt, system_prompt, max_tokens=2200, temperature=0.6, title="TRH Publicador"):
     if not OPENROUTER_API_KEY:
         raise RuntimeError('Falta OPENROUTER_API_KEY en entorno (.env)')
 
@@ -226,27 +227,17 @@ def llamar_ia(prompt):
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://trh.local",
-                    "X-Title": "TRH Publicador"
+                    "X-Title": title
                 }
 
                 data = {
                     "model": modelo,
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Eres un redactor de noticias profesional. "
-                                "Tu regla más importante es: NUNCA inventes información. "
-                                "Solo puedes usar datos que aparezcan explícitamente en las fuentes proporcionadas. "
-                                "Debes unificar el mismo hecho/persona entre fuentes aunque haya diferencias menores (edad, día exacto), "
-                                "evitar duplicar protagonistas salvo evidencia clara de casos distintos, "
-                                "y explicitar contradicciones con redacción neutral (ej: 'según X... mientras que Y...')."
-                            )
-                        },
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.6,
-                    "max_tokens": 2200,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
                     "response_format": {"type": "json_object"}
                 }
 
@@ -265,9 +256,7 @@ def llamar_ia(prompt):
                 response.raise_for_status()
                 result = response.json()
                 contenido = result['choices'][0]['message']['content'].strip()
-                parsed = json.loads(contenido)
-                _validar_contenido_generado(parsed)
-                return parsed
+                return json.loads(contenido)
 
             except (requests.Timeout, requests.ConnectionError) as e:
                 logger.warning("Error de red con %s (intento %s): %s", modelo, intento, e)
@@ -283,6 +272,45 @@ def llamar_ia(prompt):
                 time.sleep(2 * intento)
 
     raise Exception("Todos los modelos de IA fallaron")
+
+
+def llamar_ia(prompt):
+    parsed = llamar_ia_json(
+        prompt,
+        system_prompt=(
+            "Eres un redactor de noticias profesional. "
+            "Tu regla más importante es: NUNCA inventes información. "
+            "Solo puedes usar datos que aparezcan explícitamente en las fuentes proporcionadas. "
+            "Debes unificar el mismo hecho/persona entre fuentes aunque haya diferencias menores (edad, día exacto), "
+            "evitar duplicar protagonistas salvo evidencia clara de casos distintos, "
+            "y explicitar contradicciones con redacción neutral (ej: 'según X... mientras que Y...')."
+        ),
+    )
+    _validar_contenido_generado(parsed)
+    return parsed
+
+
+def set_requiere_revision_editorial(cluster_id, requiere_revision):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                    UPDATE clusters_editoriales
+                    SET requiere_revision_editorial = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """,
+                (requiere_revision, cluster_id),
+            )
+        conn.commit()
+    except psycopg2_errors.UndefinedColumn:
+        conn.rollback()
+        logger.warning(
+            "No existe clusters_editoriales.requiere_revision_editorial; ejecutar migración manual."
+        )
+    finally:
+        conn.close()
 
 
 # =============================================================================
