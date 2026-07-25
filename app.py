@@ -196,17 +196,30 @@ def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations
     enriched = []
     for item in saved_recommendations:
         enriched_item = dict(item)
+        cluster = None
+        try:
+            cluster = obtener_cluster_db(enriched_item['cluster_id'])
+            if cluster:
+                for field in (
+                    'estado_publicacion',
+                    'requiere_revision_editorial',
+                    'url_wp',
+                    'contenido_ia',
+                    'foto_principal',
+                    'fotos_secundarias',
+                    'fotos_manuales',
+                ):
+                    if field in cluster:
+                        enriched_item[field] = cluster.get(field)
+        except Exception:
+            record_context_failure()
+
         estado = enriched_item.get('estado_publicacion') or 'pendiente'
-        if estado == 'generado':
-            try:
-                cluster = obtener_cluster_db(enriched_item['cluster_id'])
-                if cluster:
-                    enriched_item['quick_publish_cluster'] = cluster
-                    enriched_item['quick_publish_news'] = obtener_noticias_cluster(
-                        enriched_item['cluster_id']
-                    )
-            except Exception:
-                record_context_failure()
+        if estado == 'generado' and cluster:
+            enriched_item['quick_publish_cluster'] = cluster
+            enriched_item['quick_publish_news'] = obtener_noticias_cluster(
+                enriched_item['cluster_id']
+            )
         enriched.append(enriched_item)
     return enriched
 
@@ -244,6 +257,7 @@ def obtener_cluster_db(cluster_id):
                     titulo_representativo,
                     contenido_ia,
                     estado_publicacion,
+                    requiere_revision_editorial,
                     foto_principal,
                     fotos_secundarias,
                     url_wp,

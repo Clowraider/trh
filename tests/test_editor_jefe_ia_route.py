@@ -609,7 +609,7 @@ def test_saved_recommendations_show_ready_badge_when_cluster_is_generated(monkey
             {
                 **candidate(cluster_id=7, title="Guardado listo"),
                 "reason": "Saved",
-                "estado_publicacion": "generado",
+                "estado_publicacion": "pendiente",
             },
             {
                 **candidate(cluster_id=8, title="Guardado pendiente"),
@@ -623,6 +623,7 @@ def test_saved_recommendations_show_ready_badge_when_cluster_is_generated(monkey
         "obtener_cluster_db",
         lambda cluster_id: {
             "id": cluster_id,
+            "estado_publicacion": "generado" if cluster_id == 7 else "pendiente",
             "foto_principal": "https://img.test/cover.jpg" if cluster_id == 7 else "",
             "fotos_secundarias": [],
             "fotos_manuales": [],
@@ -642,7 +643,7 @@ def test_saved_recommendations_show_ready_badge_when_cluster_is_generated(monkey
     assert response.data.count("✅ Listo".encode("utf-8")) == 1
 
 
-def test_saved_recommendations_show_editorial_review_badge_when_required():
+def test_saved_recommendations_show_editorial_review_badge_when_required(monkeypatch):
     import app as panel
 
     configure_panel(
@@ -652,10 +653,23 @@ def test_saved_recommendations_show_editorial_review_badge_when_required():
                 **candidate(cluster_id=7, title="Guardado con revisión"),
                 "reason": "Saved",
                 "estado_publicacion": "generado",
-                "requiere_revision_editorial": True,
+                "requiere_revision_editorial": False,
             }
         ],
     )
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "generado",
+            "requiere_revision_editorial": True,
+            "foto_principal": "",
+            "fotos_secundarias": [],
+            "fotos_manuales": [],
+        },
+    )
+    monkeypatch.setattr(panel, "obtener_noticias_cluster", lambda cluster_id: [])
 
     response = panel.app.test_client().get("/editor-jefe-ia")
 
@@ -709,6 +723,52 @@ def test_generated_saved_recommendation_shows_quick_publish_controls_only_for_ge
     assert b"/publicar/7" in response.data
     assert b"save_photos_before_publish" in response.data
     assert b"quick-publish-8" not in response.data
+
+
+def test_saved_recommendations_hide_quick_publish_when_current_cluster_is_already_published(monkeypatch):
+    import app as panel
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=lambda _factory: [
+            {
+                **candidate(cluster_id=7, title="Guardado desactualizado"),
+                "reason": "Saved",
+                "estado_publicacion": "generado",
+                "requiere_revision_editorial": True,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "publicado",
+            "requiere_revision_editorial": False,
+            "foto_principal": "https://img.test/cover.jpg",
+            "fotos_secundarias": ["https://img.test/secondary.jpg"],
+            "fotos_manuales": [],
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_noticias_cluster",
+        lambda cluster_id: [
+            {"url_imagen": "https://img.test/cover.jpg", "fuente": "Medio 1"},
+            {"url_imagen": "https://img.test/secondary.jpg", "fuente": "Medio 2"},
+        ],
+    )
+
+    response = panel.app.test_client().get("/editor-jefe-ia")
+
+    assert response.status_code == 200
+    assert b"Guardado desactualizado" in response.data
+    assert "✅ Listo".encode("utf-8") not in response.data
+    assert "⚠️ Requiere revisión editorial".encode("utf-8") not in response.data
+    assert b"Elegir fotos" not in response.data
+    assert b"quick-publish-7" not in response.data
+    assert b"/publicar/7" not in response.data
 
 
 def test_editor_jefe_quick_publish_saves_selected_photos_and_redirects_to_cluster(monkeypatch):
