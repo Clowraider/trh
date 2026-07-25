@@ -59,6 +59,56 @@ MAX_UPLOAD_FILES = 6
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES * MAX_UPLOAD_FILES
 
 
+def _update_cluster_nota_ia(cluster_id, nota_ia):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                    UPDATE clusters_editoriales
+                    SET nota_ia = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """,
+                (nota_ia, cluster_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_states=None):
+    cluster = cluster or obtener_cluster_db(cluster_id)
+    if not cluster:
+        return {"status": "missing"}
+
+    estado = cluster.get('estado_publicacion') or 'pendiente'
+    allowed_states = allowed_states or ('pendiente', 'generando', 'generado')
+    if estado not in allowed_states:
+        return {"status": "skipped", "state": estado}
+
+    stored_nota_ia = (cluster.get('nota_ia') or '').strip()
+    effective_nota_ia = stored_nota_ia if nota_ia is None else nota_ia.strip()
+
+    if nota_ia is not None and effective_nota_ia != stored_nota_ia:
+        _update_cluster_nota_ia(cluster_id, effective_nota_ia)
+
+    generator = app.config.get(
+        "EDITOR_JEFE_ARTICLE_GENERATOR", publicador.generar_articulo_para_cluster
+    )
+    try:
+        resultado = generator(cluster_id, nota_ia=effective_nota_ia)
+    except Exception as exc:
+        return {"status": "failed", "message": str(exc)}
+
+    if resultado.get("ok"):
+        return {"status": "generated", "result": resultado}
+    return {
+        "status": "failed",
+        "message": resultado.get('mensaje', 'Error desconocido'),
+    }
+
+
 def _cluster_upload_dir(cluster_id):
     return os.path.join(TEMP_UPLOAD_BASE_DIR, f'cluster_{cluster_id}')
 
@@ -894,47 +944,78 @@ def generar_articulo(cluster_id):
     Recibe POST del botón "Generar con IA".
     Llama a publicador.generar_articulo_para_cluster() y redirige al detalle.
     """
-    cluster = obtener_cluster_db(cluster_id)
-    if not cluster:
+    outcome = _generate_cluster_article(
+        cluster_id,
+        nota_ia=request.form.get('nota_ia', ''),
+    )
+
+    if outcome["status"] == "missing":
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
 
-    estado = cluster.get('estado_publicacion') or 'pendiente'
-
-    if estado not in ('pendiente', 'generando', 'generado'):
+    if outcome["status"] == "skipped":
         flash(
-            f"No se puede generar/regenerar: estado actual = '{estado}'",
+            f"No se puede generar/regenerar: estado actual = '{outcome['state']}'",
             "warning"
         )
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    nota_ia = (request.form.get('nota_ia', '') or '').strip()
-
-    if nota_ia != (cluster.get('nota_ia') or '').strip():
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET nota_ia = %s,
-                        actualizado_en = NOW()
-                    WHERE id = %s
-                """, (nota_ia, cluster_id))
-            conn.commit()
-        finally:
-            conn.close()
-
-    resultado = publicador.generar_articulo_para_cluster(cluster_id, nota_ia=nota_ia)
-
-    if resultado["ok"]:
+    if outcome["status"] == "generated":
         flash("✅ Artículo generado correctamente", "success")
     else:
         flash(
-            f"❌ Error: {resultado.get('mensaje', 'Error desconocido')}",
+            f"❌ Error: {outcome.get('message', 'Error desconocido')}",
             "danger"
         )
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+
+@app.route("/editor-jefe-ia/generar-guardadas", methods=["POST"])
+def generar_articulos_guardados_editor_jefe_ia():
+    connection_factory = app.config.get(
+        "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
+    )
+    load_saved = app.config.get(
+        "EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS", load_saved_recommendations
+    )
+
+    try:
+        saved_recommendations = load_saved(connection_factory)
+    except Exception:
+        record_context_failure()
+        flash("No se pudieron cargar las propuestas guardadas. Probá de nuevo.", "danger")
+        return redirect(url_for('editor_jefe_ia'))
+
+    if not saved_recommendations:
+        flash("No hay propuestas guardadas para generar.", "info")
+        return redirect(url_for('editor_jefe_ia'))
+
+    generated = 0
+    skipped = 0
+    failed = 0
+
+    for item in saved_recommendations:
+        cluster_id = item["cluster_id"]
+        outcome = _generate_cluster_article(
+            cluster_id,
+            cluster=obtener_cluster_db(cluster_id),
+            allowed_states=('pendiente',),
+        )
+        if outcome["status"] == "generated":
+            generated += 1
+        elif outcome["status"] == "failed":
+            failed += 1
+        else:
+            skipped += 1
+
+    category = "success" if failed == 0 else "warning"
+    flash(
+        "Generación IA desde propuestas guardadas: "
+        f"{generated} generados, {skipped} omitidos, {failed} fallidos.",
+        category,
+    )
+    return redirect(url_for('editor_jefe_ia'))
 
 
 @app.route("/preview/<int:cluster_id>")

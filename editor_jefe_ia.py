@@ -201,17 +201,19 @@ ON editor_jefe_ia_recommendations (recommended_at DESC)
 
 _LOAD_RECOMMENDATIONS_SQL = """
 SELECT
-    cluster_id,
-    title,
-    reason,
-    editorial_score,
-    technical_score,
-    news_count,
-    source_count,
-    newest_at,
-    recommended_at
-FROM editor_jefe_ia_recommendations
-ORDER BY recommended_at DESC, cluster_id DESC
+    r.cluster_id,
+    r.title,
+    r.reason,
+    r.editorial_score,
+    r.technical_score,
+    r.news_count,
+    r.source_count,
+    r.newest_at,
+    r.recommended_at,
+    COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion
+FROM editor_jefe_ia_recommendations r
+LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id
+ORDER BY r.recommended_at DESC, r.cluster_id DESC
 """
 
 _SAVE_RECOMMENDATION_SQL = """

@@ -34,6 +34,13 @@ def configure_panel(panel, **overrides):
     panel.app.config.update(**config)
 
 
+def pop_flashes(client):
+    with client.session_transaction() as session:
+        flashes = list(session.get("_flashes", []))
+        session["_flashes"] = []
+    return flashes
+
+
 @pytest.mark.parametrize("raw", [None, "", "0", "-1", "1.5", " 1", "1 ", "true", True])
 def test_maximum_rejects_non_positive_whole_numbers(raw):
     with pytest.raises(feature.FeatureError):
@@ -420,6 +427,197 @@ def test_saved_recommendations_are_excluded_and_new_ones_are_accumulated():
     assert [item["cluster_id"] for item in saved] == [1, 2]
     assert b"Viejo" in response.data
     assert b"Fresh" in response.data
+
+
+def test_single_cluster_generation_route_updates_note_and_reuses_generator(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+    updates = []
+    generator_calls = []
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "pendiente",
+            "nota_ia": "nota previa",
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "_update_cluster_nota_ia",
+        lambda cluster_id, nota_ia: updates.append((cluster_id, nota_ia)),
+    )
+    panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = (
+        lambda cluster_id, nota_ia="": generator_calls.append((cluster_id, nota_ia))
+        or {"ok": True}
+    )
+
+    response = client.post("/generar/7", data={"nota_ia": "  nueva nota  "})
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert updates == [(7, "nueva nota")]
+    assert generator_calls == [(7, "nueva nota")]
+    assert pop_flashes(client) == [("success", "✅ Artículo generado correctamente")]
+
+
+def test_single_cluster_generation_route_blocks_invalid_states_without_calling_generator(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+    generator_calls = []
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "publicado",
+            "nota_ia": "",
+        },
+    )
+    panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = (
+        lambda cluster_id, nota_ia="": generator_calls.append((cluster_id, nota_ia))
+        or {"ok": True}
+    )
+
+    response = client.post("/generar/8", data={"nota_ia": "ignorada"})
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/8")
+    assert generator_calls == []
+    assert pop_flashes(client) == [
+        ("warning", "No se puede generar/regenerar: estado actual = 'publicado'")
+    ]
+
+
+def test_single_cluster_generation_route_converts_generator_exception_into_flash(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "pendiente",
+            "nota_ia": "",
+        },
+    )
+
+    def explode(_cluster_id, nota_ia=""):
+        raise RuntimeError(f"boom: {nota_ia}")
+
+    panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = explode
+
+    response = client.post("/generar/9", data={"nota_ia": "nota rota"})
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/9")
+    assert pop_flashes(client) == [("danger", "❌ Error: boom: nota rota")]
+
+
+def test_saved_recommendations_bulk_generate_button_is_shown_only_with_saved_items():
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+
+    empty_response = client.get("/editor-jefe-ia")
+    assert b"Generar art\xc3\xadculos IA" not in empty_response.data
+    assert b"/editor-jefe-ia/generar-guardadas" not in empty_response.data
+
+    panel.app.config["EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS"] = lambda _factory: [
+        {**candidate(cluster_id=7, title="Guardado"), "reason": "Saved"}
+    ]
+    saved_response = client.get("/editor-jefe-ia")
+    assert b"Generar art\xc3\xadculos IA" in saved_response.data
+    assert b"/editor-jefe-ia/generar-guardadas" in saved_response.data
+
+
+def test_saved_recommendations_show_ready_badge_when_cluster_is_generated():
+    import app as panel
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=lambda _factory: [
+            {
+                **candidate(cluster_id=7, title="Guardado listo"),
+                "reason": "Saved",
+                "estado_publicacion": "generado",
+            },
+            {
+                **candidate(cluster_id=8, title="Guardado pendiente"),
+                "reason": "Saved too",
+                "estado_publicacion": "pendiente",
+            },
+        ],
+    )
+
+    response = panel.app.test_client().get("/editor-jefe-ia")
+
+    assert response.status_code == 200
+    assert b"Guardado listo" in response.data
+    assert b"Guardado pendiente" in response.data
+    assert response.data.count("✅ Listo".encode("utf-8")) == 1
+
+
+def test_bulk_generation_processes_saved_recommendations_sequentially_and_summarizes(monkeypatch):
+    import app as panel
+
+    saved = [
+        {**candidate(cluster_id=1, title="Uno"), "reason": "Saved uno"},
+        {**candidate(cluster_id=2, title="Dos"), "reason": "Saved dos"},
+        {**candidate(cluster_id=3, title="Tres"), "reason": "Saved tres"},
+        {**candidate(cluster_id=4, title="Cuatro"), "reason": "Saved cuatro"},
+        {**candidate(cluster_id=5, title="Cinco"), "reason": "Saved cinco"},
+    ]
+    clusters = {
+        1: {"id": 1, "estado_publicacion": "pendiente", "nota_ia": "persisted note"},
+        2: {"id": 2, "estado_publicacion": "generado", "nota_ia": "skip me"},
+        4: {"id": 4, "estado_publicacion": "pendiente", "nota_ia": ""},
+        5: {"id": 5, "estado_publicacion": None, "nota_ia": "special note"},
+    }
+    generator_calls = []
+
+    def load_saved(_factory):
+        return list(saved)
+
+    def generate(cluster_id, nota_ia=""):
+        generator_calls.append((cluster_id, nota_ia))
+        if cluster_id == 4:
+            return {"ok": False, "mensaje": "boom"}
+        return {"ok": True}
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=load_saved,
+        EDITOR_JEFE_ARTICLE_GENERATOR=generate,
+    )
+    monkeypatch.setattr(panel, "obtener_cluster_db", lambda cluster_id: clusters.get(cluster_id))
+
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia/generar-guardadas",
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert generator_calls == [
+        (1, "persisted note"),
+        (4, ""),
+        (5, "special note"),
+    ]
+    assert b"2 generados" in response.data
+    assert b"2 omitidos" in response.data
+    assert b"1 fallidos" in response.data
+    assert b"Propuestas guardadas" in response.data
 
 
 def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatch):

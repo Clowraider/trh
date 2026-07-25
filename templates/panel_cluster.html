@@ -123,6 +123,17 @@
         </div>
       </div>
 
+      {% if estado == 'publicado' %}
+      <div class="alert alert-success mb-4">
+        <h5 class="mb-1">✅ Ya publicado</h5>
+        {% if cluster.url_wp %}
+        <a href="{{ cluster.url_wp }}" target="_blank" class="alert-link">
+          Ver en WordPress →
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
+
       {% with messages = get_flashed_messages(with_categories=true) %} {% if
       messages %} {% for category, message in messages %}
       <div
@@ -518,16 +529,6 @@
                 🔁 Regenerar con IA
               </button>
             </form>
-          </div>
-
-          {% elif estado == 'publicado' %}
-          <div class="alert alert-success">
-            <h5 class="mb-1">✅ Ya publicado</h5>
-            {% if cluster.url_wp %}
-            <a href="{{ cluster.url_wp }}" target="_blank" class="alert-link">
-              Ver en WordPress →
-            </a>
-            {% endif %}
           </div>
 
           {% elif estado == 'descartado' %}

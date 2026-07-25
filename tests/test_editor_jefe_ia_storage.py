@@ -37,7 +37,12 @@ class RecordingConnection:
 
 
 def test_load_saved_recommendations_ensures_storage_and_returns_rows():
-    rows = [{"cluster_id": 7, "title": "Saved", "reason": "Reason"}]
+    rows = [{
+        "cluster_id": 7,
+        "title": "Saved",
+        "reason": "Reason",
+        "estado_publicacion": "generado",
+    }]
     conn = RecordingConnection(rows=rows)
 
     result = feature.load_saved_recommendations(lambda: conn)
@@ -47,7 +52,9 @@ def test_load_saved_recommendations_ensures_storage_and_returns_rows():
     assert conn.commit_count == 1
     assert "CREATE TABLE IF NOT EXISTS editor_jefe_ia_recommendations" in conn.executed[0][0]
     assert "CREATE INDEX IF NOT EXISTS idx_editor_jefe_ia_recommendations_recommended_at" in conn.executed[1][0]
-    assert "SELECT cluster_id, title, reason, editorial_score" in conn.executed[2][0]
+    assert "SELECT r.cluster_id, r.title, r.reason, r.editorial_score" in conn.executed[2][0]
+    assert "LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id" in conn.executed[2][0]
+    assert "COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion" in conn.executed[2][0]
 
 
 def test_save_recommendations_ensures_storage_and_inserts_each_selection():
