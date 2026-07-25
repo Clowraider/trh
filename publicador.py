@@ -64,60 +64,11 @@ logger = logging.getLogger(__name__)
 
 ARTICLE_WRITER_SYSTEM_PROMPT = load_prompt_text(
     'ARTICLE_WRITER_SYSTEM_PROMPT_FILE',
-    (
-        "Eres un redactor de noticias profesional. "
-        "Tu regla más importante es: NUNCA inventes información. "
-        "Solo puedes usar datos que aparezcan explícitamente en las fuentes proporcionadas. "
-        "Debes unificar el mismo hecho/persona entre fuentes aunque haya diferencias menores (edad, día exacto), "
-        "evitar duplicar protagonistas salvo evidencia clara de casos distintos, "
-        "y explicitar contradicciones con redacción neutral (ej: 'según X... mientras que Y...')."
-    ),
     logger,
 )
 
 ARTICLE_WRITER_USER_PROMPT_TEMPLATE = load_prompt_text(
     'ARTICLE_WRITER_USER_PROMPT_FILE',
-    """Genera un artículo unificado basado SOLO en la información de las siguientes fuentes:
-
-$sources_block
-INSTRUCCIONES IMPORTANTES:
-- Usa ÚNICAMENTE la información presente en las fuentes proporcionadas.
-- NO inventes datos, números, nombres, hechos ni conclusiones que no estén explícitamente en las noticias.
-
-RESOLUCIÓN DE IDENTIDAD Y HECHOS:
-- Antes de redactar, unifica entidades y hechos equivalentes entre fuentes.
-- Si dos fuentes describen el mismo hecho/persona con diferencias menores (ej: fecha 30 vs 31, edad 84 vs 85), trátalo como UN solo caso, no como casos distintos.
-- No infieras múltiples víctimas/protagonistas por variaciones menores de edad, fecha u hora.
-- Solo separa en hechos/personas distintas si hay evidencia clara de que sean eventos diferentes.
-
-MANEJO DE CONTRADICCIONES:
-- Prioriza el dato respaldado por más fuentes.
-- Si hay empate o no se puede resolver, expresa incertidumbre de forma neutral (ej: "84/85 años", "entre el 30 y el 31").
-- Cuando exista contradicción, expresa la incertidumbre de forma neutral sin duplicar el caso. En toda la salida, no nombres fuentes ni medios en el título, el resumen o el artículo.
-
-CONSISTENCIA TEMPORAL:
-- Normaliza referencias temporales ambiguas (ej: "ayer", "anoche") al contexto del hecho cuando sea posible.
-- Si no es posible fijar una fecha única, usa una ventana temporal neutral.
-
-CALIDAD DE SALIDA:
-- Escribe en español neutro de Argentina, claro, profesional y objetivo.
-- Une la información de forma coherente y natural.
-- Antes de responder, verifica internamente:
-  1) que no duplicaste protagonistas,
-  2) que no hay números incompatibles sin aclaración,
-  3) que cada afirmación relevante está sustentada por al menos una fuente.
-
-Genera la respuesta EXACTAMENTE en este formato JSON:
-
-{
-  "titulo": "Título atractivo, periodístico y preciso",
-  "resumen": "Lead de máximo 280 caracteres",
-  "articulo": "Cuerpo completo de la noticia bien estructurado en párrafos",
-  "categoria": "Una sola categoría de esta lista: Salud, Política, Deportes, Cultura, Economía, Sociedad, Turismo, Seguridad, Educación"
-}
-
-No agregues ningún texto fuera del JSON.$editorial_guidance_block
-""",
     logger,
 )
 

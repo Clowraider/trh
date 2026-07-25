@@ -1,6 +1,7 @@
 import importlib
 import json
 import logging
+import os
 
 import pytest
 
@@ -13,7 +14,6 @@ def test_load_prompt_text_returns_file_contents_when_configured(tmp_path):
 
     prompt = prompt_loader.load_prompt_text(
         "TEST_PROMPT_FILE",
-        "fallback prompt",
         logger=logging.getLogger("tests.prompt_loader"),
         env={"TEST_PROMPT_FILE": str(prompt_file)},
     )
@@ -21,18 +21,24 @@ def test_load_prompt_text_returns_file_contents_when_configured(tmp_path):
     assert prompt == "Prompt override\n"
 
 
-def test_load_prompt_text_logs_warning_and_uses_fallback_on_read_failure(caplog):
-    with caplog.at_level(logging.WARNING):
-        prompt = prompt_loader.load_prompt_text(
+def test_load_prompt_text_requires_configured_env_var():
+    with pytest.raises(RuntimeError, match="TEST_PROMPT_FILE"):
+        prompt_loader.load_prompt_text(
             "TEST_PROMPT_FILE",
-            "fallback prompt",
+            logger=logging.getLogger("tests.prompt_loader"),
+            env={},
+        )
+
+
+def test_load_prompt_text_fails_on_read_error():
+    with pytest.raises(RuntimeError, match="TEST_PROMPT_FILE") as excinfo:
+        prompt_loader.load_prompt_text(
+            "TEST_PROMPT_FILE",
             logger=logging.getLogger("tests.prompt_loader"),
             env={"TEST_PROMPT_FILE": "/tmp/does-not-exist.txt"},
         )
 
-    assert prompt == "fallback prompt"
-    assert "Failed to load prompt file" in caplog.text
-    assert "TEST_PROMPT_FILE" in caplog.text
+    assert "does not exist" in str(excinfo.value)
 
 
 def test_load_json_file_returns_validated_contents_when_configured(tmp_path):
@@ -44,7 +50,6 @@ def test_load_json_file_returns_validated_contents_when_configured(tmp_path):
 
     rules = prompt_loader.load_json_file(
         "TEST_RULES_FILE",
-        [{"code": "fallback", "instruction": "Fallback."}],
         logger=logging.getLogger("tests.prompt_loader"),
         validator=lambda value: value,
         env={"TEST_RULES_FILE": str(rules_file)},
@@ -53,24 +58,29 @@ def test_load_json_file_returns_validated_contents_when_configured(tmp_path):
     assert rules == [{"code": "neutral_tone", "instruction": "Use neutral tone."}]
 
 
-def test_load_json_file_logs_warning_and_uses_fallback_on_invalid_content(
-    tmp_path, caplog
-):
+def test_load_json_file_requires_configured_env_var():
+    with pytest.raises(RuntimeError, match="TEST_RULES_FILE"):
+        prompt_loader.load_json_file(
+            "TEST_RULES_FILE",
+            logger=logging.getLogger("tests.prompt_loader"),
+            validator=lambda value: value,
+            env={},
+        )
+
+
+def test_load_json_file_fails_on_invalid_json(tmp_path):
     rules_file = tmp_path / "rules.json"
     rules_file.write_text("{invalid json", encoding="utf-8")
 
-    with caplog.at_level(logging.WARNING):
-        rules = prompt_loader.load_json_file(
+    with pytest.raises(RuntimeError, match="TEST_RULES_FILE") as excinfo:
+        prompt_loader.load_json_file(
             "TEST_RULES_FILE",
-            [{"code": "fallback", "instruction": "Fallback."}],
             logger=logging.getLogger("tests.prompt_loader"),
             validator=lambda value: value,
             env={"TEST_RULES_FILE": str(rules_file)},
         )
 
-    assert rules == [{"code": "fallback", "instruction": "Fallback."}]
-    assert "Failed to load JSON file" in caplog.text
-    assert "TEST_RULES_FILE" in caplog.text
+    assert "invalid JSON" in str(excinfo.value)
 
 
 @pytest.mark.parametrize(
@@ -99,20 +109,26 @@ def test_load_json_file_logs_warning_and_uses_fallback_on_invalid_content(
 def test_modules_load_prompt_override_from_env_file(
     monkeypatch, tmp_path, module_name, env_var, attribute_name, override_text
 ):
+    original_value = os.environ.get(env_var)
     prompt_file = tmp_path / f"{module_name}.txt"
     prompt_file.write_text(override_text, encoding="utf-8")
     monkeypatch.setenv(env_var, str(prompt_file))
 
     module = importlib.import_module(module_name)
-    reloaded = importlib.reload(module)
+    try:
+        reloaded = importlib.reload(module)
 
-    assert getattr(reloaded, attribute_name) == override_text
-
-    monkeypatch.delenv(env_var, raising=False)
-    importlib.reload(reloaded)
+        assert getattr(reloaded, attribute_name) == override_text
+    finally:
+        if original_value is None:
+            monkeypatch.delenv(env_var, raising=False)
+        else:
+            monkeypatch.setenv(env_var, original_value)
+        importlib.reload(module)
 
 
 def test_editorial_control_loads_rules_override_from_env_file(monkeypatch, tmp_path):
+    original_value = os.environ.get("EDITORIAL_CONTROL_RULES_FILE")
     rules_file = tmp_path / "editorial_control_rules.json"
     rules_file.write_text(
         json.dumps(
@@ -128,22 +144,25 @@ def test_editorial_control_loads_rules_override_from_env_file(monkeypatch, tmp_p
     monkeypatch.setenv("EDITORIAL_CONTROL_RULES_FILE", str(rules_file))
 
     module = importlib.import_module("editorial_control")
-    reloaded = importlib.reload(module)
+    try:
+        reloaded = importlib.reload(module)
 
-    assert reloaded.EDITORIAL_CONTROL_RULES == [
-        {
-            "code": "neutral_tone",
-            "instruction": "Mantené un tono neutral y factual.",
-        }
-    ]
+        assert reloaded.EDITORIAL_CONTROL_RULES == [
+            {
+                "code": "neutral_tone",
+                "instruction": "Mantené un tono neutral y factual.",
+            }
+        ]
+    finally:
+        if original_value is None:
+            monkeypatch.delenv("EDITORIAL_CONTROL_RULES_FILE", raising=False)
+        else:
+            monkeypatch.setenv("EDITORIAL_CONTROL_RULES_FILE", original_value)
+        importlib.reload(module)
 
-    monkeypatch.delenv("EDITORIAL_CONTROL_RULES_FILE", raising=False)
-    importlib.reload(reloaded)
 
-
-def test_editorial_control_uses_fallback_rules_when_rules_file_is_invalid(
-    monkeypatch, tmp_path, caplog
-):
+def test_editorial_control_fails_when_rules_file_is_invalid(monkeypatch, tmp_path):
+    original_value = os.environ.get("EDITORIAL_CONTROL_RULES_FILE")
     rules_file = tmp_path / "editorial_control_rules.json"
     rules_file.write_text(
         json.dumps([{"code": "", "instruction": "Missing code"}]),
@@ -152,18 +171,21 @@ def test_editorial_control_uses_fallback_rules_when_rules_file_is_invalid(
     monkeypatch.setenv("EDITORIAL_CONTROL_RULES_FILE", str(rules_file))
 
     module = importlib.import_module("editorial_control")
-    with caplog.at_level(logging.WARNING):
-        reloaded = importlib.reload(module)
+    try:
+        with pytest.raises(RuntimeError, match="EDITORIAL_CONTROL_RULES_FILE") as excinfo:
+            importlib.reload(module)
 
-    assert reloaded.EDITORIAL_CONTROL_RULES == reloaded.DEFAULT_EDITORIAL_CONTROL_RULES
-    assert "Failed to load JSON file" in caplog.text
-    assert "EDITORIAL_CONTROL_RULES_FILE" in caplog.text
-
-    monkeypatch.delenv("EDITORIAL_CONTROL_RULES_FILE", raising=False)
-    importlib.reload(reloaded)
+        assert "invalid value" in str(excinfo.value)
+    finally:
+        if original_value is None:
+            monkeypatch.delenv("EDITORIAL_CONTROL_RULES_FILE", raising=False)
+        else:
+            monkeypatch.setenv("EDITORIAL_CONTROL_RULES_FILE", original_value)
+        importlib.reload(module)
 
 
 def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
+    original_value = os.environ.get("ARTICLE_WRITER_USER_PROMPT_FILE")
     prompt_file = tmp_path / "article_writer_user_prompt.txt"
     prompt_file.write_text(
         "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block",
@@ -172,24 +194,44 @@ def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
     monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", str(prompt_file))
 
     publicador = importlib.import_module("publicador")
-    reloaded = importlib.reload(publicador)
+    try:
+        reloaded = importlib.reload(publicador)
 
-    prompt = reloaded.construir_prompt(
-        [
-            {
-                "fuente": "Fuente Test",
-                "titulo": "Título Test",
-                "fecha_publicacion": None,
-                "texto_completo": "Texto base",
-            }
-        ],
-        nota_ia="Seguí esta guía.",
-    )
+        prompt = reloaded.construir_prompt(
+            [
+                {
+                    "fuente": "Fuente Test",
+                    "titulo": "Título Test",
+                    "fecha_publicacion": None,
+                    "texto_completo": "Texto base",
+                }
+            ],
+            nota_ia="Seguí esta guía.",
+        )
 
-    assert "Fuentes:" in prompt
-    assert "FUENTE 1: Fuente Test" in prompt
-    assert "CONTENIDO: Texto base..." in prompt
-    assert "Seguí esta guía." in prompt
+        assert "Fuentes:" in prompt
+        assert "FUENTE 1: Fuente Test" in prompt
+        assert "CONTENIDO: Texto base..." in prompt
+        assert "Seguí esta guía." in prompt
+    finally:
+        if original_value is None:
+            monkeypatch.delenv("ARTICLE_WRITER_USER_PROMPT_FILE", raising=False)
+        else:
+            monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", original_value)
+        importlib.reload(publicador)
 
-    monkeypatch.delenv("ARTICLE_WRITER_USER_PROMPT_FILE", raising=False)
-    importlib.reload(reloaded)
+
+def test_module_import_fails_when_required_prompt_env_var_is_missing(monkeypatch):
+    original_value = os.environ.get("EDITOR_JEFE_SYSTEM_PROMPT_FILE")
+    monkeypatch.delenv("EDITOR_JEFE_SYSTEM_PROMPT_FILE", raising=False)
+
+    module = importlib.import_module("editor_jefe_ia")
+    try:
+        with pytest.raises(RuntimeError, match="EDITOR_JEFE_SYSTEM_PROMPT_FILE"):
+            importlib.reload(module)
+    finally:
+        if original_value is None:
+            monkeypatch.delenv("EDITOR_JEFE_SYSTEM_PROMPT_FILE", raising=False)
+        else:
+            monkeypatch.setenv("EDITOR_JEFE_SYSTEM_PROMPT_FILE", original_value)
+        importlib.reload(module)
