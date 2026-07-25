@@ -80,19 +80,25 @@ def test_prompt_is_compact_stable_complete_and_budgeted():
         )
 
 
-def test_requested_number_limits_input_batch_not_output_target():
-    candidates = [candidate(cluster_id=index) for index in range(528)]
+def test_requested_number_limits_total_input_and_splits_batches_of_five():
+    candidates = [candidate(cluster_id=index) for index in range(12)]
     payloads = []
 
     class Client:
         def select(self, payload):
             payloads.append(json.loads(payload))
-            return {"selections": [{"cluster_id": 9, "reason": "Relevant"}]}
+            cluster_id = payloads[-1]["candidates"][-1]["cluster_id"]
+            return {"selections": [{"cluster_id": cluster_id, "reason": f"Relevant {cluster_id}"}]}
 
-    result = feature.select_recommendations(candidates, 10, Client())
-    assert [item["cluster_id"] for item in payloads[0]["candidates"]] == list(range(10))
-    assert payloads[0]["batch_size"] == 10
-    assert [item["cluster_id"] for item in result] == [9]
+    result = feature.select_recommendations(candidates, 7, Client())
+
+    assert [[item["cluster_id"] for item in payload["candidates"]] for payload in payloads] == [
+        list(range(5)),
+        [5, 6],
+    ]
+    assert [payload["batch_size"] for payload in payloads] == [5, 2]
+    assert [item["cluster_id"] for item in result] == [4, 6]
+    assert [item["reason"] for item in result] == ["Relevant 4", "Relevant 6"]
 
 
 @pytest.mark.parametrize("body", [
@@ -427,6 +433,57 @@ def test_saved_recommendations_are_excluded_and_new_ones_are_accumulated():
     assert [item["cluster_id"] for item in saved] == [1, 2]
     assert b"Viejo" in response.data
     assert b"Fresh" in response.data
+
+
+def test_route_batches_requested_candidates_in_groups_of_five_and_keeps_total_cap():
+    import app as panel
+
+    payloads = []
+    saved = []
+    candidates = [candidate(cluster_id=index, title=f"Cluster {index}", editorial_score=80)
+                  for index in range(1, 10)]
+
+    def load_saved(_factory):
+        return list(saved)
+
+    def save_saved(_factory, selections):
+        saved.extend(selections)
+
+    class Client:
+        def select(self, payload):
+            parsed = json.loads(payload)
+            payloads.append(parsed)
+            return {
+                "selections": [{
+                    "cluster_id": parsed["candidates"][-1]["cluster_id"],
+                    "reason": f"Batch {len(payloads)}",
+                }]
+            }
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: candidates,
+        EDITOR_JEFE_CONNECTION_FACTORY=object(),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=load_saved,
+        EDITOR_JEFE_SAVE_RECOMMENDATIONS=save_saved,
+    )
+
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "7", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+
+    assert response.status_code == 200
+    assert [[item["cluster_id"] for item in payload["candidates"]] for payload in payloads] == [
+        [1, 2, 3, 4, 5],
+        [6, 7],
+    ]
+    assert [payload["batch_size"] for payload in payloads] == [5, 2]
+    assert [item["cluster_id"] for item in saved] == [5, 7]
+    assert b"Batch 1" in response.data
+    assert b"Batch 2" in response.data
+    assert b"Cluster 8" not in response.data
 
 
 def test_single_cluster_generation_route_updates_note_and_reuses_generator(monkeypatch):

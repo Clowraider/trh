@@ -34,6 +34,9 @@
       <form method="post" class="card card-body mb-4">
         <label class="form-label" for="maximum">Cantidad de candidatos a procesar</label>
         <input class="form-control mb-3" id="maximum" name="maximum" type="number" min="1" step="1" required value="{{ maximum }}" />
+        <div class="form-text mb-3">
+          Se procesa en lotes de hasta 5 candidatos por solicitud. Recomendación: usar múltiplos de 5 para aprovechar mejor los tokens.
+        </div>
         <label class="form-label" for="minimum_editorial_score">Score editorial mínimo</label>
         <input class="form-control mb-3" id="minimum_editorial_score" name="minimum_editorial_score" type="number" min="1" step="1" required value="{{ minimum_editorial_score }}" />
         <button class="btn btn-primary" type="submit">Solicitar recomendación</button>
@@ -48,7 +51,7 @@
       {% elif state == 'invalid-minimum-score' %}
         <div class="alert alert-danger">Debés ingresar un número entero positivo para el score editorial.</div>
       {% elif state == 'capacity' %}
-        <div class="alert alert-warning">El lote solicitado es demasiado grande para enviarlo de forma segura. No se hizo ninguna solicitud a la IA; pedí menos candidatos.</div>
+        <div class="alert alert-warning">Uno de los lotes solicitados es demasiado grande para enviarlo de forma segura. Probá con menos candidatos.</div>
       {% elif state == 'no-eligible' %}
         <div class="alert alert-info">No se encontraron clusters elegibles en los últimos tres días.</div>
       {% elif state == 'zero' %}

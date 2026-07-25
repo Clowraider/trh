@@ -177,6 +177,7 @@ EDITOR_JEFE_SYSTEM_PROMPT = (
     "natural Spanish. Never imply approval or trigger actions. Return only JSON: "
     "{\"selections\":[{\"cluster_id\":1,\"reason\":\"motivo breve en castellano\"}]}"
 )
+SELECTION_BATCH_LIMIT = 5
 PAYLOAD_BYTE_LIMIT = 48_000
 RESPONSE_TOKEN_LIMIT = 1_200
 
@@ -420,6 +421,13 @@ def delete_saved_recommendation(connection_factory, cluster_id):
 
 
 def select_recommendations(candidates, batch_size, client):
-    batch = candidates[:batch_size]
-    payload = serialize_selection_payload(batch, batch_size)
-    return validate_selection_response(client.select(payload), batch, batch_size)
+    selections = []
+    limited_candidates = candidates[:batch_size]
+    for index in range(0, len(limited_candidates), SELECTION_BATCH_LIMIT):
+        batch = limited_candidates[index:index + SELECTION_BATCH_LIMIT]
+        batch_maximum = len(batch)
+        payload = serialize_selection_payload(batch, batch_maximum)
+        selections.extend(
+            validate_selection_response(client.select(payload), batch, batch_maximum)
+        )
+    return selections
