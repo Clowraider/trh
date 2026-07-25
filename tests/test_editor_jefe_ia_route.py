@@ -600,7 +600,7 @@ def test_saved_recommendations_bulk_generate_button_is_shown_only_with_saved_ite
     assert b"/editor-jefe-ia/generar-guardadas" in saved_response.data
 
 
-def test_saved_recommendations_show_ready_badge_when_cluster_is_generated():
+def test_saved_recommendations_show_ready_badge_when_cluster_is_generated(monkeypatch):
     import app as panel
 
     configure_panel(
@@ -617,6 +617,21 @@ def test_saved_recommendations_show_ready_badge_when_cluster_is_generated():
                 "estado_publicacion": "pendiente",
             },
         ],
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "foto_principal": "https://img.test/cover.jpg" if cluster_id == 7 else "",
+            "fotos_secundarias": [],
+            "fotos_manuales": [],
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_noticias_cluster",
+        lambda cluster_id: [{"url_imagen": "https://img.test/cover.jpg", "fuente": "Medio"}] if cluster_id == 7 else [],
     )
 
     response = panel.app.test_client().get("/editor-jefe-ia")
@@ -647,6 +662,116 @@ def test_saved_recommendations_show_editorial_review_badge_when_required():
     assert response.status_code == 200
     assert b"Guardado con revisi\xc3\xb3n" in response.data
     assert "⚠️ Requiere revisión editorial".encode("utf-8") in response.data
+
+
+def test_generated_saved_recommendation_shows_quick_publish_controls_only_for_generated(monkeypatch):
+    import app as panel
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=lambda _factory: [
+            {
+                **candidate(cluster_id=7, title="Guardado listo"),
+                "reason": "Saved",
+                "estado_publicacion": "generado",
+            },
+            {
+                **candidate(cluster_id=8, title="Guardado pendiente"),
+                "reason": "Saved too",
+                "estado_publicacion": "pendiente",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "foto_principal": "https://img.test/cover.jpg" if cluster_id == 7 else "",
+            "fotos_secundarias": ["https://img.test/secondary.jpg"] if cluster_id == 7 else [],
+            "fotos_manuales": [],
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_noticias_cluster",
+        lambda cluster_id: [
+            {"url_imagen": "https://img.test/cover.jpg", "fuente": "Medio 1"},
+            {"url_imagen": "https://img.test/secondary.jpg", "fuente": "Medio 2"},
+        ] if cluster_id == 7 else [],
+    )
+
+    response = panel.app.test_client().get("/editor-jefe-ia")
+
+    assert response.status_code == 200
+    assert response.data.count(b"Elegir fotos") == 1
+    assert b"quick-publish-7" in response.data
+    assert b"/publicar/7" in response.data
+    assert b"save_photos_before_publish" in response.data
+    assert b"quick-publish-8" not in response.data
+
+
+def test_editor_jefe_quick_publish_saves_selected_photos_and_redirects_to_cluster(monkeypatch):
+    import app as panel
+
+    saved_photo_selections = []
+    removed = []
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {"id": cluster_id, "estado_publicacion": "generado"},
+    )
+    monkeypatch.setattr(
+        panel,
+        "_seleccion_fotos_desde_form",
+        lambda cluster_id, form, noticias=None: (
+            "https://img.test/cover.jpg",
+            ["https://img.test/secondary-a.jpg", "https://img.test/secondary-b.jpg"],
+        ),
+    )
+    monkeypatch.setattr(
+        panel,
+        "_guardar_seleccion_fotos",
+        lambda cluster_id, foto_principal, fotos_secundarias: saved_photo_selections.append(
+            (cluster_id, foto_principal, fotos_secundarias)
+        ),
+    )
+    monkeypatch.setattr(
+        panel.publicapress,
+        "publicar_cluster",
+        lambda cluster_id: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+    )
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda factory, cluster_id: removed.append((factory, cluster_id)),
+    )
+
+    response = panel.app.test_client().post(
+        "/publicar/7",
+        data={
+            "return_to": "cluster_detalle",
+            "save_photos_before_publish": "1",
+            "foto_principal": "https://img.test/cover.jpg",
+            "fotos_secundarias": [
+                "https://img.test/secondary-a.jpg",
+                "https://img.test/secondary-b.jpg",
+            ],
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert saved_photo_selections == [
+        (
+            7,
+            "https://img.test/cover.jpg",
+            ["https://img.test/secondary-a.jpg", "https://img.test/secondary-b.jpg"],
+        )
+    ]
+    assert removed == [(panel.get_connection, 7)]
 
 
 def test_bulk_generation_processes_saved_recommendations_sequentially_and_summarizes(monkeypatch):

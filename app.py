@@ -144,6 +144,73 @@ def _listar_fotos_manuales(cluster_id):
     return fotos
 
 
+def _urls_fotos_permitidas(cluster_id, noticias=None):
+    noticias = noticias if noticias is not None else obtener_noticias_cluster(cluster_id)
+    urls_noticias = [
+        (n.get('url_imagen') or '').strip()
+        for n in noticias
+        if (n.get('url_imagen') or '').strip()
+    ]
+    return set(urls_noticias + _listar_fotos_manuales(cluster_id))
+
+
+def _seleccion_fotos_desde_form(cluster_id, form, noticias=None):
+    urls_permitidas = _urls_fotos_permitidas(cluster_id, noticias=noticias)
+
+    foto_principal = (form.get('foto_principal', '') or '').strip()
+    if foto_principal and foto_principal not in urls_permitidas:
+        foto_principal = ''
+
+    fotos_secundarias = [
+        (u or '').strip() for u in form.getlist('fotos_secundarias')
+        if (u or '').strip() and (u or '').strip() in urls_permitidas
+    ]
+
+    fotos_limpias = []
+    for url in fotos_secundarias:
+        if url == foto_principal:
+            continue
+        if url not in fotos_limpias:
+            fotos_limpias.append(url)
+
+    return foto_principal, fotos_limpias[:2]
+
+
+def _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_secundarias):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE clusters_editoriales
+                SET foto_principal = %s,
+                    fotos_secundarias = %s::jsonb,
+                    actualizado_en = NOW()
+                WHERE id = %s
+            """, (foto_principal, json.dumps(fotos_secundarias, ensure_ascii=False), cluster_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations):
+    enriched = []
+    for item in saved_recommendations:
+        enriched_item = dict(item)
+        estado = enriched_item.get('estado_publicacion') or 'pendiente'
+        if estado == 'generado':
+            try:
+                cluster = obtener_cluster_db(enriched_item['cluster_id'])
+                if cluster:
+                    enriched_item['quick_publish_cluster'] = cluster
+                    enriched_item['quick_publish_news'] = obtener_noticias_cluster(
+                        enriched_item['cluster_id']
+                    )
+            except Exception:
+                record_context_failure()
+        enriched.append(enriched_item)
+    return enriched
+
+
 # =============================================================================
 # HELPERS DE BASE DE DATOS
 # =============================================================================
@@ -612,6 +679,9 @@ def editor_jefe_ia():
     except Exception:
         record_context_failure()
         state, selections, saved_recommendations = "error", [], []
+    saved_recommendations = _enriquecer_recomendaciones_guardadas_para_publicacion(
+        saved_recommendations
+    )
     response = make_response(render_template(
         "panel_editor_jefe_ia.html", state=state,
         selections=selections, maximum=maximum,
@@ -1113,6 +1183,19 @@ def publicar_cluster(cluster_id):
         flash("Primero generá el artículo con IA", "info")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
+    redirect_to_cluster = request.form.get('return_to') == 'cluster_detalle'
+    if request.form.get('save_photos_before_publish') == '1':
+        try:
+            foto_principal, fotos_secundarias = _seleccion_fotos_desde_form(
+                cluster_id, request.form
+            )
+            _guardar_seleccion_fotos(
+                cluster_id, foto_principal, fotos_secundarias
+            )
+        except Exception as e:
+            flash(f"❌ Error guardando fotos: {e}", "danger")
+            return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
     resultado = publicapress.publicar_cluster(cluster_id)
 
     if resultado["ok"]:
@@ -1132,7 +1215,8 @@ def publicar_cluster(cluster_id):
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
     else:
         flash(f"❌ Error: {resultado.get('mensaje', 'Desconocido')}", "danger")
-        return redirect(url_for('preview_articulo', cluster_id=cluster_id))
+        endpoint = 'cluster_detalle' if redirect_to_cluster else 'preview_articulo'
+        return redirect(url_for(endpoint, cluster_id=cluster_id))
 
 
 @app.route("/upload-fotos/<int:cluster_id>", methods=["POST"])
@@ -1181,45 +1265,9 @@ def set_foto_principal(cluster_id):
     """
     Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
     """
-    urls_noticias = [
-        (n.get('url_imagen') or '').strip()
-        for n in obtener_noticias_cluster(cluster_id)
-        if (n.get('url_imagen') or '').strip()
-    ]
-    urls_permitidas = set(urls_noticias + _listar_fotos_manuales(cluster_id))
-
-    foto_principal = (request.form.get('foto_principal', '') or '').strip()
-    if foto_principal and foto_principal not in urls_permitidas:
-        foto_principal = ''
-
-    fotos_secundarias = [
-        (u or '').strip() for u in request.form.getlist('fotos_secundarias')
-        if (u or '').strip() and (u or '').strip() in urls_permitidas
-    ]
-
-    # Limpiar duplicados preservando orden
-    fotos_limpias = []
-    for url in fotos_secundarias:
-        if url == foto_principal:
-            continue
-        if url not in fotos_limpias:
-            fotos_limpias.append(url)
-    fotos_limpias = fotos_limpias[:2]
-
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET foto_principal = %s,
-                    fotos_secundarias = %s::jsonb,
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (foto_principal, json.dumps(fotos_limpias, ensure_ascii=False), cluster_id))
-        conn.commit()
-        flash("Fotos guardadas", "success")
-    finally:
-        conn.close()
+    foto_principal, fotos_limpias = _seleccion_fotos_desde_form(cluster_id, request.form)
+    _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_limpias)
+    flash("Fotos guardadas", "success")
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
