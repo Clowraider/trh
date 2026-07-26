@@ -174,3 +174,30 @@ def test_control_marks_review_required_when_second_review_errors_after_regenerat
     assert result["editorial_control"]["error"] == "Error de control editorial: control caído en retry"
     assert result["editorial_control"]["initial_review"]["passed"] is False
     assert review_flags == [(11, True)]
+
+
+def test_control_marks_review_required_when_regeneration_fails_after_rejected_review():
+    review_flags = []
+
+    def generate(_cluster_id, nota_ia=""):
+        if "AJUSTES DE CONTROL EDITORIAL OBLIGATORIOS" in nota_ia:
+            return {"ok": False, "error": "falló la regeneración"}
+        return {"ok": True, "contenido": article("Primera")}
+
+    def review(_contenido):
+        return {
+            "passed": False,
+            "issues": ["accusatory_tone"],
+            "correction_instructions": "Bajá el tono acusatorio.",
+        }
+
+    result = control.generate_article_with_editorial_control(
+        12,
+        nota_ia="nota original",
+        generator=generate,
+        review_article=review,
+        set_review_required=lambda cluster_id, value: review_flags.append((cluster_id, value)),
+    )
+
+    assert result == {"ok": False, "error": "falló la regeneración"}
+    assert review_flags == [(12, True)]

@@ -189,6 +189,7 @@ def generate_article_with_editorial_control(
         ),
     )
     if not second_result.get("ok"):
+        set_flag(cluster_id, True)
         return second_result
 
     try:
