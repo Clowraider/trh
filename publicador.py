@@ -22,26 +22,18 @@ import psycopg2
 import requests
 import json
 import time
+from string import Template
 from datetime import datetime
 from psycopg2.extras import RealDictCursor
+
+from env_loader import load_project_env
+from prompt_loader import load_prompt_text
 
 # =============================================================================
 # CONFIGURACIÓN
 # =============================================================================
 
-def _load_env_file(path='.env'):
-    if not os.path.exists(path):
-        return
-    with open(path, 'r', encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, value = line.split('=', 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-_load_env_file()
+load_project_env()
 
 DB_HOST = os.getenv('DB_HOST', '127.0.0.1')
 DB_PORT = int(os.getenv('DB_PORT', '5432'))
@@ -57,6 +49,50 @@ MODEL_FALLBACK = os.getenv('OPENROUTER_MODEL_FALLBACK', 'deepseek/deepseek-v4-fl
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+ARTICLE_WRITER_SYSTEM_PROMPT = load_prompt_text(
+    'ARTICLE_WRITER_SYSTEM_PROMPT_FILE',
+    logger,
+)
+
+REQUIRED_ARTICLE_WRITER_TEMPLATE_PLACEHOLDERS = {
+    'sources_block',
+    'editorial_guidance_block',
+}
+
+
+def _extract_template_placeholders(template_text):
+    template = Template(template_text)
+    placeholders = set()
+
+    for match in template.pattern.finditer(template.template):
+        name = match.group('named') or match.group('braced')
+        if name:
+            placeholders.add(name)
+
+    return placeholders
+
+
+def _load_article_writer_user_prompt_template():
+    template_text = load_prompt_text(
+        'ARTICLE_WRITER_USER_PROMPT_FILE',
+        logger,
+    )
+    placeholders = _extract_template_placeholders(template_text)
+    missing_placeholders = sorted(
+        REQUIRED_ARTICLE_WRITER_TEMPLATE_PLACEHOLDERS - placeholders
+    )
+
+    if missing_placeholders:
+        raise RuntimeError(
+            'ARTICLE_WRITER_USER_PROMPT_FILE is missing required placeholders: '
+            + ', '.join(f'${name}' for name in missing_placeholders)
+        )
+
+    return template_text
+
+
+ARTICLE_WRITER_USER_PROMPT_TEMPLATE = _load_article_writer_user_prompt_template()
 
 
 # =============================================================================
@@ -120,6 +156,39 @@ def obtener_noticias_cluster(cluster_id):
 # CONSTRUIR EL PROMPT PARA LA IA
 # =============================================================================
 
+def _build_article_sources_block(noticias):
+    partes = []
+
+    for i, noticia in enumerate(noticias, 1):
+        contenido = noticia['texto_completo']
+
+        partes.append(f"---\nFUENTE {i}: {noticia['fuente']}")
+        partes.append(f"TÍTULO: {noticia['titulo']}")
+
+        if noticia['fecha_publicacion']:
+            fp = noticia['fecha_publicacion']
+            fecha_str = fp.date() if hasattr(fp, 'date') else str(fp)
+            partes.append(f"FECHA: {fecha_str}")
+
+        partes.append(f"CONTENIDO: {contenido[:1800]}...\n")
+
+    return "\n".join(partes)
+
+
+def _build_editorial_guidance_block(nota_ia=''):
+    nota_limpia = (nota_ia or '').strip()
+    if not nota_limpia:
+        return ''
+
+    return """
+
+GUIA EDITORIAL ADICIONAL (opcional, dada por editor):
+- Seguí estas indicaciones SOLO si no contradicen las fuentes.
+- No uses esta guía para inventar hechos.
+{nota}
+""".format(nota=nota_limpia)
+
+
 def construir_prompt(noticias, nota_ia=''):
     """
     Arma el texto (prompt) que se envía a la IA.
@@ -132,74 +201,11 @@ def construir_prompt(noticias, nota_ia=''):
     Se le pasa como máximo ~1800 caracteres de cada noticia
     para no gastar tokens de más.
     """
-    partes = ["Genera un artículo unificado basado SOLO en la información de las siguientes fuentes:\n"]
-
-    for i, noticia in enumerate(noticias, 1):
-        # contenido: texto completo si existe, sino el lead (si hay)
-        contenido = noticia['texto_completo']
-
-        partes.append(f"---\nFUENTE {i}: {noticia['fuente']}")
-        partes.append(f"TÍTULO: {noticia['titulo']}")
-
-        if noticia['fecha_publicacion']:
-            # Mostrar solo la fecha (sin hora), más legible
-            fp = noticia['fecha_publicacion']
-            fecha_str = fp.date() if hasattr(fp, 'date') else str(fp)
-            partes.append(f"FECHA: {fecha_str}")
-
-        # Truncar a 1800 chars para no mandar texto innecesario a la IA
-        partes.append(f"CONTENIDO: {contenido[:1800]}...\n")
-
-    partes.append("""
-INSTRUCCIONES IMPORTANTES:
-- Usa ÚNICAMENTE la información presente en las fuentes proporcionadas.
-- NO inventes datos, números, nombres, hechos ni conclusiones que no estén explícitamente en las noticias.
-
-RESOLUCIÓN DE IDENTIDAD Y HECHOS:
-- Antes de redactar, unifica entidades y hechos equivalentes entre fuentes.
-- Si dos fuentes describen el mismo hecho/persona con diferencias menores (ej: fecha 30 vs 31, edad 84 vs 85), trátalo como UN solo caso, no como casos distintos.
-- No infieras múltiples víctimas/protagonistas por variaciones menores de edad, fecha u hora.
-- Solo separa en hechos/personas distintas si hay evidencia clara de que sean eventos diferentes.
-
-MANEJO DE CONTRADICCIONES:
-- Prioriza el dato respaldado por más fuentes.
-- Si hay empate o no se puede resolver, expresa incertidumbre de forma neutral (ej: "84/85 años", "entre el 30 y el 31").
-- Cuando exista contradicción, expresa la incertidumbre de forma neutral sin duplicar el caso. En toda la salida, no nombres fuentes ni medios en el título, el resumen o el artículo.
-
-CONSISTENCIA TEMPORAL:
-- Normaliza referencias temporales ambiguas (ej: "ayer", "anoche") al contexto del hecho cuando sea posible.
-- Si no es posible fijar una fecha única, usa una ventana temporal neutral.
-
-CALIDAD DE SALIDA:
-- Escribe en español neutro de Argentina, claro, profesional y objetivo.
-- Une la información de forma coherente y natural.
-- Antes de responder, verifica internamente:
-  1) que no duplicaste protagonistas,
-  2) que no hay números incompatibles sin aclaración,
-  3) que cada afirmación relevante está sustentada por al menos una fuente.
-
-Genera la respuesta EXACTAMENTE en este formato JSON:
-
-{
-  "titulo": "Título atractivo, periodístico y preciso",
-  "resumen": "Lead de máximo 280 caracteres",
-  "articulo": "Cuerpo completo de la noticia bien estructurado en párrafos",
-  "categoria": "Una sola categoría de esta lista: Salud, Política, Deportes, Cultura, Economía, Sociedad, Turismo, Seguridad, Educación"
-}
-
-No agregues ningún texto fuera del JSON.""")
-
-    nota_limpia = (nota_ia or '').strip()
-    if nota_limpia:
-        partes.append("""
-
-GUIA EDITORIAL ADICIONAL (opcional, dada por editor):
-- Seguí estas indicaciones SOLO si no contradicen las fuentes.
-- No uses esta guía para inventar hechos.
-""")
-        partes.append(nota_limpia)
-
-    return "\n".join(partes)
+    prompt_template = Template(ARTICLE_WRITER_USER_PROMPT_TEMPLATE)
+    return prompt_template.safe_substitute(
+        sources_block=_build_article_sources_block(noticias),
+        editorial_guidance_block=_build_editorial_guidance_block(nota_ia),
+    )
 
 
 # =============================================================================
@@ -213,7 +219,7 @@ def _validar_contenido_generado(contenido):
         raise ValueError(f"Respuesta IA incompleta. Faltan campos: {', '.join(faltantes)}")
 
 
-def llamar_ia(prompt):
+def llamar_ia_json(prompt, system_prompt, max_tokens=2200, temperature=0.6, title="TRH Publicador"):
     if not OPENROUTER_API_KEY:
         raise RuntimeError('Falta OPENROUTER_API_KEY en entorno (.env)')
 
@@ -226,27 +232,17 @@ def llamar_ia(prompt):
                     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                     "Content-Type": "application/json",
                     "HTTP-Referer": "https://trh.local",
-                    "X-Title": "TRH Publicador"
+                    "X-Title": title
                 }
 
                 data = {
                     "model": modelo,
                     "messages": [
-                        {
-                            "role": "system",
-                            "content": (
-                                "Eres un redactor de noticias profesional. "
-                                "Tu regla más importante es: NUNCA inventes información. "
-                                "Solo puedes usar datos que aparezcan explícitamente en las fuentes proporcionadas. "
-                                "Debes unificar el mismo hecho/persona entre fuentes aunque haya diferencias menores (edad, día exacto), "
-                                "evitar duplicar protagonistas salvo evidencia clara de casos distintos, "
-                                "y explicitar contradicciones con redacción neutral (ej: 'según X... mientras que Y...')."
-                            )
-                        },
+                        {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt}
                     ],
-                    "temperature": 0.6,
-                    "max_tokens": 2200,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
                     "response_format": {"type": "json_object"}
                 }
 
@@ -265,9 +261,7 @@ def llamar_ia(prompt):
                 response.raise_for_status()
                 result = response.json()
                 contenido = result['choices'][0]['message']['content'].strip()
-                parsed = json.loads(contenido)
-                _validar_contenido_generado(parsed)
-                return parsed
+                return json.loads(contenido)
 
             except (requests.Timeout, requests.ConnectionError) as e:
                 logger.warning("Error de red con %s (intento %s): %s", modelo, intento, e)
@@ -283,6 +277,33 @@ def llamar_ia(prompt):
                 time.sleep(2 * intento)
 
     raise Exception("Todos los modelos de IA fallaron")
+
+
+def llamar_ia(prompt):
+    parsed = llamar_ia_json(
+        prompt,
+        system_prompt=ARTICLE_WRITER_SYSTEM_PROMPT,
+    )
+    _validar_contenido_generado(parsed)
+    return parsed
+
+
+def set_requiere_revision_editorial(cluster_id, requiere_revision):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                    UPDATE clusters_editoriales
+                    SET requiere_revision_editorial = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """,
+                (requiere_revision, cluster_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 # =============================================================================
@@ -423,6 +444,18 @@ def generar_articulo_para_cluster(cluster_id, nota_ia=''):
     logger.info("📰 Noticias encontradas: %s", len(noticias))
 
     if not noticias:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET estado_publicacion = 'pendiente'
+                    WHERE id = %s
+                """, (cluster_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
         return {
             "ok": False,
             "mensaje": "El cluster no tiene noticias asociadas."

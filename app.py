@@ -24,6 +24,10 @@ from datetime import datetime
 # Agregar el directorio del proyecto al path para poder importar los otros módulos
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from env_loader import load_project_env
+
+load_project_env()
+
 from flask import (
     Flask,
     render_template,
@@ -31,10 +35,19 @@ from flask import (
     redirect,
     url_for,
     flash,
-    jsonify
+    jsonify,
+    make_response
 )
 from PIL import Image
 from seleccionar_publicables import get_connection, generar_candidatos
+from editor_jefe_ia import (
+    FeatureError, OpenRouterSelectionClient, build_editorial_context,
+    delete_saved_recommendation, load_saved_recommendations, parse_maximum,
+    parse_minimum_editorial_score, record_context_failure, save_recommendations,
+    select_recommendations,
+)
+from editorial_control import generate_article_with_editorial_control
+from html_sanitizer import sanitize_article_markup
 import publicador
 import publicapress
 
@@ -50,6 +63,56 @@ ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024  # 8MB por imagen
 MAX_UPLOAD_FILES = 6
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES * MAX_UPLOAD_FILES
+
+
+def _update_cluster_nota_ia(cluster_id, nota_ia):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                    UPDATE clusters_editoriales
+                    SET nota_ia = %s,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """,
+                (nota_ia, cluster_id),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_states=None, generator=None):
+    cluster = cluster or obtener_cluster_db(cluster_id)
+    if not cluster:
+        return {"status": "missing"}
+
+    estado = cluster.get('estado_publicacion') or 'pendiente'
+    allowed_states = allowed_states or ('pendiente', 'generando', 'generado')
+    if estado not in allowed_states:
+        return {"status": "skipped", "state": estado}
+
+    stored_nota_ia = (cluster.get('nota_ia') or '').strip()
+    effective_nota_ia = stored_nota_ia if nota_ia is None else nota_ia.strip()
+
+    if nota_ia is not None and effective_nota_ia != stored_nota_ia:
+        _update_cluster_nota_ia(cluster_id, effective_nota_ia)
+
+    generator = generator or app.config.get(
+        "EDITOR_JEFE_ARTICLE_GENERATOR", publicador.generar_articulo_para_cluster
+    )
+    try:
+        resultado = generator(cluster_id, nota_ia=effective_nota_ia)
+    except Exception as exc:
+        return {"status": "failed", "message": str(exc)}
+
+    if resultado.get("ok"):
+        return {"status": "generated", "result": resultado}
+    return {
+        "status": "failed",
+        "message": resultado.get('mensaje', 'Error desconocido'),
+    }
 
 
 def _cluster_upload_dir(cluster_id):
@@ -86,6 +149,86 @@ def _listar_fotos_manuales(cluster_id):
     return fotos
 
 
+def _urls_fotos_permitidas(cluster_id, noticias=None):
+    noticias = noticias if noticias is not None else obtener_noticias_cluster(cluster_id)
+    urls_noticias = [
+        (n.get('url_imagen') or '').strip()
+        for n in noticias
+        if (n.get('url_imagen') or '').strip()
+    ]
+    return set(urls_noticias + _listar_fotos_manuales(cluster_id))
+
+
+def _seleccion_fotos_desde_form(cluster_id, form, noticias=None):
+    urls_permitidas = _urls_fotos_permitidas(cluster_id, noticias=noticias)
+
+    foto_principal = (form.get('foto_principal', '') or '').strip()
+    if foto_principal and foto_principal not in urls_permitidas:
+        foto_principal = ''
+
+    fotos_secundarias = [
+        (u or '').strip() for u in form.getlist('fotos_secundarias')
+        if (u or '').strip() and (u or '').strip() in urls_permitidas
+    ]
+
+    fotos_limpias = []
+    for url in fotos_secundarias:
+        if url == foto_principal:
+            continue
+        if url not in fotos_limpias:
+            fotos_limpias.append(url)
+
+    return foto_principal, fotos_limpias[:2]
+
+
+def _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_secundarias):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE clusters_editoriales
+                SET foto_principal = %s,
+                    fotos_secundarias = %s::jsonb,
+                    actualizado_en = NOW()
+                WHERE id = %s
+            """, (foto_principal, json.dumps(fotos_secundarias, ensure_ascii=False), cluster_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations):
+    enriched = []
+    for item in saved_recommendations:
+        enriched_item = dict(item)
+        cluster = None
+        try:
+            cluster = obtener_cluster_db(enriched_item['cluster_id'])
+            if cluster:
+                for field in (
+                    'estado_publicacion',
+                    'requiere_revision_editorial',
+                    'url_wp',
+                    'contenido_ia',
+                    'foto_principal',
+                    'fotos_secundarias',
+                    'fotos_manuales',
+                ):
+                    if field in cluster:
+                        enriched_item[field] = cluster.get(field)
+        except Exception:
+            record_context_failure()
+
+        estado = enriched_item.get('estado_publicacion') or 'pendiente'
+        if estado == 'generado' and cluster:
+            enriched_item['quick_publish_cluster'] = cluster
+            enriched_item['quick_publish_news'] = obtener_noticias_cluster(
+                enriched_item['cluster_id']
+            )
+        enriched.append(enriched_item)
+    return enriched
+
+
 # =============================================================================
 # HELPERS DE BASE DE DATOS
 # =============================================================================
@@ -119,6 +262,7 @@ def obtener_cluster_db(cluster_id):
                     titulo_representativo,
                     contenido_ia,
                     estado_publicacion,
+                    requiere_revision_editorial,
                     foto_principal,
                     fotos_secundarias,
                     url_wp,
@@ -338,6 +482,22 @@ def parse_contenido_ia(raw):
     return None
 
 
+def contenido_ia_para_panel(contenido_ia):
+    if not contenido_ia:
+        return None
+
+    contenido_panel = dict(contenido_ia)
+    contenido_panel['articulo_html_panel'] = sanitize_article_markup(
+        contenido_ia.get('articulo', '')
+    )
+    return contenido_panel
+
+
+def _bloquea_publicacion_por_revision_editorial(cluster):
+    estado = cluster.get('estado_publicacion') or 'pendiente'
+    return estado == 'generado' and bool(cluster.get('requiere_revision_editorial'))
+
+
 def obtener_reporte_calidad(fuente=None, desde=None, hasta=None):
     """
     Agrega métricas de metadata.quality por fuente.
@@ -490,6 +650,81 @@ def index():
         orden_actual=orden_actual,
         ahora=datetime.now()
     )
+
+
+@app.route("/editor-jefe-ia", methods=["GET", "POST"])
+def editor_jefe_ia():
+    state, selections, maximum, minimum_editorial_score = "idle", [], "", "50"
+    saved_recommendations = []
+    connection_factory = app.config.get(
+        "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
+    )
+    load_saved = app.config.get(
+        "EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS", load_saved_recommendations
+    )
+    save_saved = app.config.get(
+        "EDITOR_JEFE_SAVE_RECOMMENDATIONS", save_recommendations
+    )
+    try:
+        saved_recommendations = load_saved(connection_factory)
+        if request.method == "POST":
+            maximum = request.form.get("maximum", "")
+            minimum_editorial_score = request.form.get("minimum_editorial_score", "50")
+            try:
+                parsed_maximum = parse_maximum(maximum)
+                parsed_minimum_score = parse_minimum_editorial_score(minimum_editorial_score)
+                builder = app.config.get("EDITOR_JEFE_CONTEXT_BUILDER", build_editorial_context)
+                recommended_ids = {item["cluster_id"] for item in saved_recommendations}
+                candidates = [
+                    candidate
+                    for candidate in builder(connection_factory, obtener_keywords_por_clusters_ids)
+                    if candidate["cluster_id"] not in recommended_ids
+                    and candidate["editorial_score"] >= parsed_minimum_score
+                ]
+                if candidates:
+                    client_factory = app.config.get(
+                        "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
+                    )
+                    selections = select_recommendations(
+                        candidates, parsed_maximum, client_factory()
+                    )
+                    if selections:
+                        try:
+                            save_saved(connection_factory, selections)
+                            saved_recommendations = load_saved(connection_factory)
+                        except Exception:
+                            record_context_failure()
+                            flash(
+                                "La recomendación se generó, pero no se pudo guardar el listado persistente.",
+                                "warning",
+                            )
+                    state = "recommendation" if selections else "zero"
+                else:
+                    state = "no-eligible"
+            except FeatureError as error:
+                if error.code == "input_failure":
+                    state = "invalid-maximum"
+                elif error.code == "minimum_score_failure":
+                    state = "invalid-minimum-score"
+                elif error.code == "payload_failure":
+                    state = "capacity"
+                else:
+                    state = "error"
+                selections = []
+    except Exception:
+        record_context_failure()
+        state, selections, saved_recommendations = "error", [], []
+    saved_recommendations = _enriquecer_recomendaciones_guardadas_para_publicacion(
+        saved_recommendations
+    )
+    response = make_response(render_template(
+        "panel_editor_jefe_ia.html", state=state,
+        selections=selections, maximum=maximum,
+        minimum_editorial_score=minimum_editorial_score,
+        saved_recommendations=saved_recommendations,
+    ))
+    response.headers["Cache-Control"] = "no-store, private"
+    return response
 
 
 @app.route("/reportes/calidad")
@@ -792,7 +1027,9 @@ def cluster_detalle(cluster_id):
         return redirect(url_for('index'))
 
     noticias = obtener_noticias_cluster(cluster_id)
-    contenido_ia = parse_contenido_ia(cluster.get('contenido_ia'))
+    contenido_ia = contenido_ia_para_panel(
+        parse_contenido_ia(cluster.get('contenido_ia'))
+    )
 
     # Evitamos recalcular toda la lista (costoso) para cada detalle.
     score_editorial = cluster.get('score', 0)
@@ -815,47 +1052,83 @@ def generar_articulo(cluster_id):
     Recibe POST del botón "Generar con IA".
     Llama a publicador.generar_articulo_para_cluster() y redirige al detalle.
     """
-    cluster = obtener_cluster_db(cluster_id)
-    if not cluster:
+    outcome = _generate_cluster_article(
+        cluster_id,
+        nota_ia=request.form.get('nota_ia', ''),
+    )
+
+    if outcome["status"] == "missing":
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
 
-    estado = cluster.get('estado_publicacion') or 'pendiente'
-
-    if estado not in ('pendiente', 'generando', 'generado'):
+    if outcome["status"] == "skipped":
         flash(
-            f"No se puede generar/regenerar: estado actual = '{estado}'",
+            f"No se puede generar/regenerar: estado actual = '{outcome['state']}'",
             "warning"
         )
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    nota_ia = (request.form.get('nota_ia', '') or '').strip()
-
-    if nota_ia != (cluster.get('nota_ia') or '').strip():
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET nota_ia = %s,
-                        actualizado_en = NOW()
-                    WHERE id = %s
-                """, (nota_ia, cluster_id))
-            conn.commit()
-        finally:
-            conn.close()
-
-    resultado = publicador.generar_articulo_para_cluster(cluster_id, nota_ia=nota_ia)
-
-    if resultado["ok"]:
+    if outcome["status"] == "generated":
         flash("✅ Artículo generado correctamente", "success")
     else:
         flash(
-            f"❌ Error: {resultado.get('mensaje', 'Error desconocido')}",
+            f"❌ Error: {outcome.get('message', 'Error desconocido')}",
             "danger"
         )
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+
+@app.route("/editor-jefe-ia/generar-guardadas", methods=["POST"])
+def generar_articulos_guardados_editor_jefe_ia():
+    connection_factory = app.config.get(
+        "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
+    )
+    load_saved = app.config.get(
+        "EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS", load_saved_recommendations
+    )
+    bulk_generator = app.config.get(
+        "EDITOR_JEFE_BULK_ARTICLE_GENERATOR",
+        generate_article_with_editorial_control,
+    )
+
+    try:
+        saved_recommendations = load_saved(connection_factory)
+    except Exception:
+        record_context_failure()
+        flash("No se pudieron cargar las propuestas guardadas. Probá de nuevo.", "danger")
+        return redirect(url_for('editor_jefe_ia'))
+
+    if not saved_recommendations:
+        flash("No hay propuestas guardadas para generar.", "info")
+        return redirect(url_for('editor_jefe_ia'))
+
+    generated = 0
+    skipped = 0
+    failed = 0
+
+    for item in saved_recommendations:
+        cluster_id = item["cluster_id"]
+        outcome = _generate_cluster_article(
+            cluster_id,
+            cluster=obtener_cluster_db(cluster_id),
+            allowed_states=('pendiente',),
+            generator=bulk_generator,
+        )
+        if outcome["status"] == "generated":
+            generated += 1
+        elif outcome["status"] == "failed":
+            failed += 1
+        else:
+            skipped += 1
+
+    category = "success" if failed == 0 else "warning"
+    flash(
+        "Generación IA desde propuestas guardadas: "
+        f"{generated} generados, {skipped} omitidos, {failed} fallidos.",
+        category,
+    )
+    return redirect(url_for('editor_jefe_ia'))
 
 
 @app.route("/preview/<int:cluster_id>")
@@ -947,14 +1220,66 @@ def publicar_cluster(cluster_id):
         flash("Primero generá el artículo con IA", "info")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
+    if _bloquea_publicacion_por_revision_editorial(cluster):
+        flash(
+            "No se puede publicar hasta aprobar la revisión editorial en el detalle del cluster.",
+            "warning",
+        )
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+    redirect_to_cluster = request.form.get('return_to') == 'cluster_detalle'
+    if request.form.get('save_photos_before_publish') == '1':
+        try:
+            foto_principal, fotos_secundarias = _seleccion_fotos_desde_form(
+                cluster_id, request.form
+            )
+            _guardar_seleccion_fotos(
+                cluster_id, foto_principal, fotos_secundarias
+            )
+        except Exception as e:
+            flash(f"❌ Error guardando fotos: {e}", "danger")
+            return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
     resultado = publicapress.publicar_cluster(cluster_id)
 
     if resultado["ok"]:
+        delete_saved = app.config.get(
+            "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION", delete_saved_recommendation
+        )
+        try:
+            delete_saved(get_connection, cluster_id)
+        except Exception:
+            record_context_failure()
+            flash(
+                f"✅ Published! → {resultado['url_wp']}. No se pudo limpiar la recomendación guardada.",
+                "warning",
+            )
+            return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
         flash(f"✅ Published! → {resultado['url_wp']}", "success")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
     else:
         flash(f"❌ Error: {resultado.get('mensaje', 'Desconocido')}", "danger")
-        return redirect(url_for('preview_articulo', cluster_id=cluster_id))
+        endpoint = 'cluster_detalle' if redirect_to_cluster else 'preview_articulo'
+        return redirect(url_for(endpoint, cluster_id=cluster_id))
+
+
+@app.route("/aprobar-revision-editorial/<int:cluster_id>", methods=["POST"])
+def aprobar_revision_editorial(cluster_id):
+    cluster = obtener_cluster_db(cluster_id)
+    if not cluster:
+        flash("Cluster no encontrado", "danger")
+        return redirect(url_for('index'))
+
+    if not cluster.get('requiere_revision_editorial'):
+        flash("Este cluster ya no requiere revisión editorial.", "info")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+    set_review_required = app.config.get(
+        "EDITORIAL_REVIEW_FLAG_SETTER", publicador.set_requiere_revision_editorial
+    )
+    set_review_required(cluster_id, False)
+    flash("Revisión editorial aprobada. Ya podés publicar.", "success")
+    return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
 
 @app.route("/upload-fotos/<int:cluster_id>", methods=["POST"])
@@ -1003,45 +1328,9 @@ def set_foto_principal(cluster_id):
     """
     Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
     """
-    urls_noticias = [
-        (n.get('url_imagen') or '').strip()
-        for n in obtener_noticias_cluster(cluster_id)
-        if (n.get('url_imagen') or '').strip()
-    ]
-    urls_permitidas = set(urls_noticias + _listar_fotos_manuales(cluster_id))
-
-    foto_principal = (request.form.get('foto_principal', '') or '').strip()
-    if foto_principal and foto_principal not in urls_permitidas:
-        foto_principal = ''
-
-    fotos_secundarias = [
-        (u or '').strip() for u in request.form.getlist('fotos_secundarias')
-        if (u or '').strip() and (u or '').strip() in urls_permitidas
-    ]
-
-    # Limpiar duplicados preservando orden
-    fotos_limpias = []
-    for url in fotos_secundarias:
-        if url == foto_principal:
-            continue
-        if url not in fotos_limpias:
-            fotos_limpias.append(url)
-    fotos_limpias = fotos_limpias[:2]
-
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET foto_principal = %s,
-                    fotos_secundarias = %s::jsonb,
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (foto_principal, json.dumps(fotos_limpias, ensure_ascii=False), cluster_id))
-        conn.commit()
-        flash("Fotos guardadas", "success")
-    finally:
-        conn.close()
+    foto_principal, fotos_limpias = _seleccion_fotos_desde_form(cluster_id, request.form)
+    _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_limpias)
+    flash("Fotos guardadas", "success")
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
@@ -1138,7 +1427,17 @@ def descartar_cluster(cluster_id):
     """
     Descarta un cluster para que no aparezca en la lista de candidatos.
     """
+    redirect_endpoint = request.form.get("return_to")
+    redirect_target = (
+        url_for("editor_jefe_ia")
+        if redirect_endpoint == "editor_jefe_ia"
+        else url_for("index")
+    )
+
     conn = get_connection()
+    delete_saved = app.config.get(
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION", delete_saved_recommendation
+    )
     try:
         with conn.cursor() as cur:
             cur.execute(
@@ -1149,12 +1448,12 @@ def descartar_cluster(cluster_id):
 
             if not cluster:
                 flash("Cluster no encontrado", "warning")
-                return redirect(url_for('index'))
+                return redirect(redirect_target)
 
             estado_actual = cluster.get('estado_publicacion') or 'pendiente'
             if estado_actual == 'descartado':
                 flash("El cluster ya estaba descartado", "info")
-                return redirect(url_for('index'))
+                return redirect(redirect_target)
 
             cur.execute("""
                 UPDATE clusters_editoriales
@@ -1163,11 +1462,18 @@ def descartar_cluster(cluster_id):
                 WHERE id = %s
             """, (cluster_id,))
         conn.commit()
-        flash("Cluster descartado", "info")
     finally:
         conn.close()
 
-    return redirect(url_for('index'))
+    try:
+        delete_saved(get_connection, cluster_id)
+    except Exception:
+        record_context_failure()
+        flash("Cluster descartado, pero no se pudo limpiar la recomendación guardada.", "warning")
+        return redirect(redirect_target)
+
+    flash("Cluster descartado", "info")
+    return redirect(redirect_target)
 
 
 @app.route("/revertir/<int:cluster_id>", methods=["POST"])

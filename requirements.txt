@@ -11,3 +11,4 @@ flask
 python-dotenv
 Pillow
 pytest
+bleach

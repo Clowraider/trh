@@ -1,0 +1,11 @@
+project: TRH
+stack:
+  language: python
+  version: "3.11"
+  framework: Flask
+  database: PostgreSQL with pgvector
+testing:
+  runner: .venv/bin/python -m pytest -q
+  strict_tdd: true
+phases:
+  strict_tdd: true

@@ -123,6 +123,42 @@
         </div>
       </div>
 
+      {% if estado == 'publicado' %}
+      <div class="alert alert-success mb-4">
+        <h5 class="mb-1">✅ Ya publicado</h5>
+        {% if cluster.url_wp %}
+        <a href="{{ cluster.url_wp }}" target="_blank" class="alert-link">
+          Ver en WordPress →
+        </a>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {% if estado == 'generado' and cluster.requiere_revision_editorial %}
+      <div class="alert alert-warning mb-4">
+        <h5 class="mb-2">⚠️ Revisión editorial obligatoria</h5>
+        <p class="mb-3">
+          No se puede publicar este artículo todavía porque el control editorial
+          marcó que requiere revisión humana. Revisalo y aprobá la revisión
+          editorial desde acá para volver a habilitar la publicación.
+        </p>
+        <div class="d-flex gap-2 flex-wrap">
+          <form
+            method="POST"
+            action="/aprobar-revision-editorial/{{ cluster.id }}"
+            class="d-inline"
+          >
+            <button type="submit" class="btn btn-warning">
+              Aprobar revisión editorial
+            </button>
+          </form>
+          <a href="/preview/{{ cluster.id }}" class="btn btn-outline-dark">
+            ✏️ Ver / Editar artículo
+          </a>
+        </div>
+      </div>
+      {% endif %}
+
       {% with messages = get_flashed_messages(with_categories=true) %} {% if
       messages %} {% for category, message in messages %}
       <div
@@ -266,137 +302,7 @@
             action="/set-foto/{{ cluster.id }}"
             id="form-fotos-cluster"
           >
-            <div class="mb-2 small text-muted">Foto principal (una sola)</div>
-            <div class="row g-2 mb-3">
-              {% for noticia in noticias %} {% if noticia.url_imagen %}
-              <div class="col-auto foto-radio">
-                <label>
-                  <input
-                    type="radio"
-                    name="foto_principal"
-                    value="{{ noticia.url_imagen }}"
-                    {% if cluster.foto_principal == noticia.url_imagen %}checked{% endif %}
-                    style="display: none"
-                  />
-                  <img
-                    src="{{ noticia.url_imagen }}"
-                    alt="principal {{ loop.index }}"
-                    style="
-                      max-height: 140px;
-                      max-width: 220px;
-                      cursor: pointer;
-                      border-radius: 4px;
-                      border: 2px solid transparent;
-                    "
-                  />
-                  <div class="text-center small text-muted mt-1">
-                    {{ noticia.fuente }}
-                  </div>
-                </label>
-              </div>
-              {% endif %} {% endfor %} {% for foto in (cluster.fotos_manuales or
-              []) %}
-              <div class="col-auto foto-radio">
-                <label>
-                  <input
-                    type="radio"
-                    name="foto_principal"
-                    value="{{ foto }}"
-                    {% if cluster.foto_principal == foto %}checked{% endif %}
-                    style="display: none"
-                  />
-                  <img
-                    src="{{ foto }}"
-                    alt="manual {{ loop.index }}"
-                    style="
-                      max-height: 140px;
-                      max-width: 220px;
-                      cursor: pointer;
-                      border-radius: 4px;
-                      border: 2px solid transparent;
-                    "
-                  />
-                  <div class="text-center small text-muted mt-1">Manual</div>
-                </label>
-              </div>
-              {% endfor %}
-            </div>
-
-            <div class="mb-2 small text-muted">
-              Fotos secundarias (máximo 2)
-            </div>
-            <div class="row g-2">
-              {% for noticia in noticias %} {% if noticia.url_imagen %}
-              <div class="col-auto foto-secundaria">
-                <label>
-                  <input
-                    type="checkbox"
-                    name="fotos_secundarias"
-                    value="{{ noticia.url_imagen }}"
-                    {%
-                    if
-                    noticia.url_imagen
-                    in
-                    (cluster.fotos_secundarias
-                    or
-                    [])
-                    %}checked{%
-                    endif
-                    %}
-                    style="display: none"
-                  />
-                  <img
-                    src="{{ noticia.url_imagen }}"
-                    alt="secundaria {{ loop.index }}"
-                    style="
-                      max-height: 140px;
-                      max-width: 220px;
-                      cursor: pointer;
-                      border-radius: 4px;
-                      border: 2px solid transparent;
-                    "
-                  />
-                  <div class="text-center small text-muted mt-1">
-                    {{ noticia.fuente }}
-                  </div>
-                </label>
-              </div>
-              {% endif %} {% endfor %} {% for foto in (cluster.fotos_manuales or
-              []) %}
-              <div class="col-auto foto-secundaria">
-                <label>
-                  <input
-                    type="checkbox"
-                    name="fotos_secundarias"
-                    value="{{ foto }}"
-                    {%
-                    if
-                    foto
-                    in
-                    (cluster.fotos_secundarias
-                    or
-                    [])
-                    %}checked{%
-                    endif
-                    %}
-                    style="display: none"
-                  />
-                  <img
-                    src="{{ foto }}"
-                    alt="manual sec {{ loop.index }}"
-                    style="
-                      max-height: 140px;
-                      max-width: 220px;
-                      cursor: pointer;
-                      border-radius: 4px;
-                      border: 2px solid transparent;
-                    "
-                  />
-                  <div class="text-center small text-muted mt-1">Manual</div>
-                </label>
-              </div>
-              {% endfor %}
-            </div>
+            {% include '_photo_selector_fields.html' %}
 
             <div class="mt-3 small text-muted">
               Se guarda automáticamente al marcar/desmarcar una foto.
@@ -430,14 +336,21 @@
           </p>
           <p><strong>Resumen:</strong> {{ contenido_ia.resumen }}</p>
           <hr />
-          <div class="contenido-preview">{{ contenido_ia.articulo|safe }}</div>
+          <div class="contenido-preview">{{ contenido_ia.articulo_html_panel }}</div>
           <hr />
+          {% if cluster.requiere_revision_editorial %}
+          <div class="alert alert-warning mb-3">
+            Publicación bloqueada: este cluster requiere aprobación editorial
+            humana antes de publicarse.
+          </div>
+          {% else %}
           <a
             href="/preview/{{ cluster.id }}"
             class="btn btn-success btn-xl mt-2"
           >
             🚀 Publicar en WordPress
           </a>
+          {% endif %}
         </div>
       </div>
       {% endif %}
@@ -491,9 +404,24 @@
           {% elif estado == 'generado' %}
           <h5 class="mb-3">Artículo listo ✅</h5>
           <div class="d-flex gap-2 justify-content-center flex-wrap">
+            {% if cluster.requiere_revision_editorial %}
+            <div class="alert alert-warning mb-0 text-start" style="max-width: 760px">
+              <strong>Publicación bloqueada.</strong>
+              Aprobá la revisión editorial para habilitar el flujo normal de publicación.
+            </div>
+            <form method="POST" action="/aprobar-revision-editorial/{{ cluster.id }}">
+              <button type="submit" class="btn btn-warning btn-xl">
+                Aprobar revisión editorial
+              </button>
+            </form>
+            <a href="/preview/{{ cluster.id }}" class="btn btn-outline-dark btn-xl">
+              ✏️ Ver / Editar artículo
+            </a>
+            {% else %}
             <a href="/preview/{{ cluster.id }}" class="btn btn-success btn-xl">
               🚀 Publicar en WordPress
             </a>
+            {% endif %}
             <form
               method="POST"
               action="/generar/{{ cluster.id }}"
@@ -518,16 +446,6 @@
                 🔁 Regenerar con IA
               </button>
             </form>
-          </div>
-
-          {% elif estado == 'publicado' %}
-          <div class="alert alert-success">
-            <h5 class="mb-1">✅ Ya publicado</h5>
-            {% if cluster.url_wp %}
-            <a href="{{ cluster.url_wp }}" target="_blank" class="alert-link">
-              Ver en WordPress →
-            </a>
-            {% endif %}
           </div>
 
           {% elif estado == 'descartado' %}

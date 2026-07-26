@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Editor Jefe IA — TRH</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <style>
+      .badge-generado {
+        background-color: #198754;
+      }
+      .foto-radio input[type="radio"]:checked + img,
+      .foto-secundaria input[type="checkbox"]:checked + img {
+        border: 4px solid #084298;
+        box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
+        filter: saturate(1.1) contrast(1.05);
+      }
+    </style>
+  </head>
+  <body class="bg-light">
+    <main class="container py-4">
+      <nav class="nav nav-tabs mb-4">
+        <a class="nav-link" href="{{ url_for('index') }}">Clusters</a>
+        <a class="nav-link active" href="{{ url_for('editor_jefe_ia') }}">Editor Jefe IA</a>
+      </nav>
+      <h2>Editor Jefe IA</h2>
+      <p class="text-muted">Elegí cuántos candidatos mejor rankeados debe procesar la IA y el score editorial mínimo requerido. Las propuestas aceptadas quedan guardadas y no se vuelven a procesar en corridas futuras. Puede recomendar cualquier subconjunto relevante, incluso ninguno.</p>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="alert alert-{{ 'danger' if category == 'danger' else 'success' if category == 'success' else 'info' if category == 'info' else 'warning' }} alert-dismissible fade show">
+              {{ message }}
+              <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+
+      <form method="post" class="card card-body mb-4">
+        <label class="form-label" for="maximum">Cantidad de candidatos a procesar</label>
+        <input class="form-control mb-3" id="maximum" name="maximum" type="number" min="1" step="1" required value="{{ maximum }}" />
+        <div class="form-text mb-3">
+          Se procesa en lotes de hasta 5 candidatos por solicitud. Sugerencia: usar múltiplos de 5 para aprovechar mejor los tokens.
+        </div>
+        <label class="form-label" for="minimum_editorial_score">Score editorial mínimo</label>
+        <input class="form-control mb-3" id="minimum_editorial_score" name="minimum_editorial_score" type="number" min="1" step="1" required value="{{ minimum_editorial_score }}" />
+        <button class="btn btn-primary" type="submit">Solicitar recomendación</button>
+      </form>
+
+      {% if state == 'idle' %}
+        <div class="alert alert-secondary">Todavía no se solicitó ninguna recomendación.</div>
+      {% elif state == 'invalid-maximum' %}
+        <div class="alert alert-danger">Debés ingresar un número entero positivo.</div>
+      {% elif state == 'error' %}
+        <div class="alert alert-danger">No se pudo completar la recomendación. Probá de nuevo.</div>
+      {% elif state == 'invalid-minimum-score' %}
+        <div class="alert alert-danger">Debés ingresar un número entero positivo para el score editorial.</div>
+      {% elif state == 'capacity' %}
+        <div class="alert alert-warning">Uno de los lotes solicitados es demasiado grande para enviarlo de forma segura. Probá con menos candidatos.</div>
+      {% elif state == 'no-eligible' %}
+        <div class="alert alert-info">No se encontraron clusters elegibles en los últimos tres días.</div>
+      {% elif state == 'zero' %}
+        <div class="alert alert-info">La recomendación de la IA no seleccionó ningún cluster. Es un resultado válido.</div>
+      {% elif state == 'recommendation' %}
+        <h3 class="h5 mb-3">Nuevas recomendaciones de esta ejecución</h3>
+        {% for item in selections %}
+          <article class="card mb-3"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div>
+                <h4 class="h6">{{ item.title }}</h4>
+                <p class="mb-2">{{ item.reason }}</p>
+              </div>
+              <div class="d-flex gap-2">
+                <form method="post" action="{{ url_for('descartar_cluster', cluster_id=item.cluster_id) }}" onsubmit="return confirm('¿Descartar este candidato?');">
+                  <input type="hidden" name="return_to" value="editor_jefe_ia" />
+                  <button type="submit" class="btn btn-sm btn-outline-danger">Descartar</button>
+                </form>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
+              </div>
+            </div>
+            <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
+            <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
+            <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+          </div></article>
+        {% endfor %}
+      {% endif %}
+
+      {% if saved_recommendations %}
+        <section class="mt-4">
+          <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
+            <div>
+              <h3 class="h5 mb-1">Propuestas guardadas</h3>
+              <p class="text-muted mb-0">Estos clusters ya fueron recomendados por Editor Jefe IA y no se vuelven a procesar en ejecuciones futuras.</p>
+            </div>
+            <form method="post" action="{{ url_for('generar_articulos_guardados_editor_jefe_ia') }}">
+              <button type="submit" class="btn btn-primary">Generar artículos IA</button>
+            </form>
+          </div>
+          {% for item in saved_recommendations %}
+            <article class="card mb-3"><div class="card-body">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <h4 class="h6">{{ item.title }}</h4>
+                  <p class="mb-2">{{ item.reason }}</p>
+                  {% if (item.estado_publicacion or 'pendiente') == 'generado' %}
+                    <span class="badge badge-generado mb-2">✅ Listo</span>
+                  {% endif %}
+                  {% if item.requiere_revision_editorial %}
+                    <span class="badge bg-warning text-dark mb-2">⚠️ Requiere revisión editorial</span>
+                  {% endif %}
+                </div>
+                <div class="d-flex gap-2">
+                  {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
+                    <button
+                      type="button"
+                      class="btn btn-sm btn-outline-success"
+                      data-bs-toggle="collapse"
+                      data-bs-target="#quick-publish-{{ item.cluster_id }}"
+                      aria-expanded="false"
+                      aria-controls="quick-publish-{{ item.cluster_id }}"
+                    >
+                      Elegir fotos
+                    </button>
+                  {% elif (item.estado_publicacion or 'pendiente') == 'generado' and item.requiere_revision_editorial %}
+                    <span class="small text-warning-emphasis align-self-center">
+                      Aprobá la revisión editorial en el cluster para habilitar la publicación.
+                    </span>
+                  {% endif %}
+                  <form method="post" action="{{ url_for('descartar_cluster', cluster_id=item.cluster_id) }}" onsubmit="return confirm('¿Descartar este candidato?');">
+                    <input type="hidden" name="return_to" value="editor_jefe_ia" />
+                    <button type="submit" class="btn btn-sm btn-outline-danger">Descartar</button>
+                  </form>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
+                </div>
+              </div>
+              <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
+              <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
+              <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+              {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
+                <div class="collapse mt-3" id="quick-publish-{{ item.cluster_id }}">
+                  <div class="border rounded bg-light p-3">
+                    <p class="small text-muted mb-3">
+                      Elegí la foto principal, las secundarias y publicá directo sin pasar por el preview.
+                    </p>
+                    <form method="post" action="{{ url_for('publicar_cluster', cluster_id=item.cluster_id) }}">
+                      <input type="hidden" name="return_to" value="cluster_detalle" />
+                      <input type="hidden" name="save_photos_before_publish" value="1" />
+                      {% set cluster = item.quick_publish_cluster %}
+                      {% set noticias = item.quick_publish_news %}
+                      {% if noticias or (cluster.fotos_manuales or []) %}
+                        {% include '_photo_selector_fields.html' %}
+                      {% else %}
+                        <p class="text-muted mb-3">No hay fotos disponibles en las noticias de este cluster.</p>
+                      {% endif %}
+                      <div class="mt-3 d-flex justify-content-end">
+                        <button type="submit" class="btn btn-success">Publicar</button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              {% endif %}
+            </div></article>
+          {% endfor %}
+        </section>
+      {% endif %}
+    </main>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  </body>
+</html>
