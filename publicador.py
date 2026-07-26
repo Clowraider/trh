@@ -461,6 +461,18 @@ def generar_articulo_para_cluster(cluster_id, nota_ia=''):
     logger.info("📰 Noticias encontradas: %s", len(noticias))
 
     if not noticias:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET estado_publicacion = 'pendiente'
+                    WHERE id = %s
+                """, (cluster_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
         return {
             "ok": False,
             "mensaje": "El cluster no tiene noticias asociadas."
