@@ -2,9 +2,11 @@ import importlib
 import json
 import logging
 import os
+import sys
 
 import pytest
 
+import env_loader
 import prompt_loader
 
 
@@ -299,3 +301,92 @@ def test_module_import_fails_when_required_prompt_env_var_is_missing(monkeypatch
         else:
             monkeypatch.setenv("EDITOR_JEFE_SYSTEM_PROMPT_FILE", original_value)
         importlib.reload(module)
+
+
+def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
+    monkeypatch, tmp_path
+):
+    writer_system_prompt = tmp_path / "article_writer_system_prompt.txt"
+    writer_system_prompt.write_text("Writer system override", encoding="utf-8")
+    writer_user_prompt = tmp_path / "article_writer_user_prompt.txt"
+    writer_user_prompt.write_text(
+        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block",
+        encoding="utf-8",
+    )
+    editor_jefe_prompt = tmp_path / "editor_jefe_system_prompt.txt"
+    editor_jefe_prompt.write_text("Editor jefe override", encoding="utf-8")
+    editorial_control_prompt = tmp_path / "editorial_control_system_prompt.txt"
+    editorial_control_prompt.write_text(
+        "Editorial control override", encoding="utf-8"
+    )
+    editorial_rules = tmp_path / "editorial_control_rules.json"
+    editorial_rules.write_text(
+        json.dumps(
+            [{"code": "neutral_tone", "instruction": "Use neutral tone."}]
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                f"ARTICLE_WRITER_SYSTEM_PROMPT_FILE={writer_system_prompt}",
+                f"ARTICLE_WRITER_USER_PROMPT_FILE={writer_user_prompt}",
+                f"EDITOR_JEFE_SYSTEM_PROMPT_FILE={editor_jefe_prompt}",
+                f"EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE={editorial_control_prompt}",
+                f"EDITORIAL_CONTROL_RULES_FILE={editorial_rules}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(env_loader, "DEFAULT_ENV_PATH", tmp_path / ".env")
+    for env_var in (
+        "ARTICLE_WRITER_SYSTEM_PROMPT_FILE",
+        "ARTICLE_WRITER_USER_PROMPT_FILE",
+        "EDITOR_JEFE_SYSTEM_PROMPT_FILE",
+        "EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE",
+        "EDITORIAL_CONTROL_RULES_FILE",
+    ):
+        monkeypatch.delenv(env_var, raising=False)
+
+    original_modules = {}
+    for module_name in (
+        "app",
+        "publicador",
+        "publicapress",
+        "editorial_control",
+        "editor_jefe_ia",
+        "pipeline.seleccionar_publicables",
+    ):
+        original_modules[module_name] = sys.modules.pop(module_name, None)
+
+    try:
+        panel = importlib.import_module("app")
+
+        assert panel.publicador.ARTICLE_WRITER_SYSTEM_PROMPT == "Writer system override"
+        assert (
+            panel.publicador.ARTICLE_WRITER_USER_PROMPT_TEMPLATE
+            == "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block"
+        )
+        assert sys.modules["editor_jefe_ia"].EDITOR_JEFE_SYSTEM_PROMPT == (
+            "Editor jefe override"
+        )
+        assert sys.modules["editorial_control"].EDITORIAL_CONTROL_SYSTEM_PROMPT == (
+            "Editorial control override"
+        )
+        assert sys.modules["editorial_control"].EDITORIAL_CONTROL_RULES == [
+            {"code": "neutral_tone", "instruction": "Use neutral tone."}
+        ]
+    finally:
+        for module_name in (
+            "app",
+            "publicador",
+            "publicapress",
+            "editorial_control",
+            "editor_jefe_ia",
+            "pipeline.seleccionar_publicables",
+        ):
+            sys.modules.pop(module_name, None)
+        for module_name, module in original_modules.items():
+            if module is not None:
+                sys.modules[module_name] = module

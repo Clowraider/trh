@@ -26,25 +26,14 @@ from string import Template
 from datetime import datetime
 from psycopg2.extras import RealDictCursor
 
+from env_loader import load_project_env
 from prompt_loader import load_prompt_text
 
 # =============================================================================
 # CONFIGURACIÓN
 # =============================================================================
 
-def _load_env_file(path='.env'):
-    if not os.path.exists(path):
-        return
-    with open(path, 'r', encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, value = line.split('=', 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-_load_env_file()
+load_project_env()
 
 DB_HOST = os.getenv('DB_HOST', '127.0.0.1')
 DB_PORT = int(os.getenv('DB_PORT', '5432'))

@@ -24,6 +24,10 @@ from datetime import datetime
 # Agregar el directorio del proyecto al path para poder importar los otros módulos
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from env_loader import load_project_env
+
+load_project_env()
+
 from flask import (
     Flask,
     render_template,

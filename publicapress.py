@@ -29,23 +29,13 @@ from urllib.parse import urlparse
 from psycopg2.extras import RealDictCursor
 from PIL import Image, ImageDraw, ImageFont
 
+from env_loader import load_project_env
+
 # =============================================================================
 # CONFIGURACIÓN
 # =============================================================================
 
-def _load_env_file(path='.env'):
-    if not os.path.exists(path):
-        return
-    with open(path, 'r', encoding='utf-8') as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith('#') or '=' not in line:
-                continue
-            key, value = line.split('=', 1)
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-
-
-_load_env_file()
+load_project_env()
 
 DB_CONFIG = {
     "host": os.getenv("DB_HOST", "127.0.0.1"),
