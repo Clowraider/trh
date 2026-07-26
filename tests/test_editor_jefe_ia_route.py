@@ -676,6 +676,46 @@ def test_saved_recommendations_show_editorial_review_badge_when_required(monkeyp
     assert response.status_code == 200
     assert b"Guardado con revisi\xc3\xb3n" in response.data
     assert "⚠️ Requiere revisión editorial".encode("utf-8") in response.data
+    assert b"Elegir fotos" not in response.data
+    assert b"/publicar/7" not in response.data
+    assert b"Aprob\xc3\xa1 la revisi\xc3\xb3n editorial" in response.data
+
+
+def test_cluster_detail_shows_editorial_review_gate_and_explicit_approval_action(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": "Cluster con revisi\xc3\xb3n",
+            "estado_publicacion": "generado",
+            "requiere_revision_editorial": True,
+            "cantidad_noticias": 2,
+            "cantidad_fuentes": 1,
+            "score": 88,
+            "nota_ia": "",
+            "contenido_ia": {
+                "titulo": "T\xc3\xadtulo generado",
+                "resumen": "Resumen generado",
+                "categoria": "Policiales",
+                "articulo": "<p>Texto generado</p>",
+            },
+            "fotos_manuales": [],
+        },
+    )
+    monkeypatch.setattr(panel, "obtener_noticias_cluster", lambda _cluster_id: [])
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert "⚠️ Revisión editorial obligatoria".encode("utf-8") in response.data
+    assert b"Aprobar revisi\xc3\xb3n editorial" in response.data
+    assert b"No se puede publicar este art\xc3\xadculo" in response.data
+    assert b"/aprobar-revision-editorial/7" in response.data
+    assert b"/preview/7" in response.data
+    assert b"/publicar/7" not in response.data
 
 
 def test_generated_saved_recommendation_shows_quick_publish_controls_only_for_generated(monkeypatch):
@@ -1007,11 +1047,113 @@ def test_publicar_cluster_removes_saved_recommendation_on_success(monkeypatch):
         lambda factory, cluster_id: removed.append((factory, cluster_id)),
     )
 
-    response = panel.app.test_client().post("/publicar/7", follow_redirects=False)
+    client = panel.app.test_client()
+    response = client.post("/publicar/7", follow_redirects=False)
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
     assert removed == [(panel.get_connection, 7)]
+
+
+def test_publicar_cluster_blocks_when_editorial_review_is_required(monkeypatch):
+    import app as panel
+
+    publish_calls = []
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "generado",
+            "requiere_revision_editorial": True,
+        },
+    )
+    monkeypatch.setattr(
+        panel.publicapress,
+        "publicar_cluster",
+        lambda cluster_id: publish_calls.append(cluster_id) or {"ok": True, "url_wp": "https://wp.test/7"},
+    )
+
+    client = panel.app.test_client()
+    response = client.post("/publicar/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert publish_calls == []
+    assert pop_flashes(client) == [
+        (
+            "warning",
+            "No se puede publicar hasta aprobar la revisión editorial en el detalle del cluster.",
+        )
+    ]
+
+
+def test_aprobar_revision_editorial_clears_flag_and_redirects_to_cluster(monkeypatch):
+    import app as panel
+
+    updates = []
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "generado",
+            "requiere_revision_editorial": True,
+        },
+    )
+    monkeypatch.setattr(
+        panel.publicador,
+        "set_requiere_revision_editorial",
+        lambda cluster_id, requires_review: updates.append((cluster_id, requires_review)),
+    )
+
+    client = panel.app.test_client()
+    response = client.post("/aprobar-revision-editorial/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert updates == [(7, False)]
+    assert pop_flashes(client) == [("success", "Revisión editorial aprobada. Ya podés publicar.")]
+
+
+def test_publish_succeeds_after_editorial_review_approval(monkeypatch):
+    import app as panel
+
+    state = {
+        "id": 7,
+        "estado_publicacion": "generado",
+        "requiere_revision_editorial": True,
+    }
+    published = []
+
+    monkeypatch.setattr(panel, "obtener_cluster_db", lambda cluster_id: dict(state))
+    monkeypatch.setattr(
+        panel.publicador,
+        "set_requiere_revision_editorial",
+        lambda cluster_id, requires_review: state.update(requiere_revision_editorial=requires_review),
+    )
+    monkeypatch.setattr(
+        panel.publicapress,
+        "publicar_cluster",
+        lambda cluster_id: published.append(cluster_id) or {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+    )
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda *_args: None,
+    )
+
+    client = panel.app.test_client()
+    approval_response = client.post("/aprobar-revision-editorial/7", follow_redirects=False)
+    publish_response = client.post("/publicar/7", follow_redirects=False)
+
+    assert approval_response.status_code == 302
+    assert publish_response.status_code == 302
+    assert publish_response.headers["Location"].endswith("/cluster/7")
+    assert published == [7]
+    assert state["requiere_revision_editorial"] is False
 
 
 def test_publicar_cluster_preserves_success_when_cleanup_fails(monkeypatch):

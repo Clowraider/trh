@@ -489,6 +489,11 @@ def contenido_ia_para_panel(contenido_ia):
     return contenido_panel
 
 
+def _bloquea_publicacion_por_revision_editorial(cluster):
+    estado = cluster.get('estado_publicacion') or 'pendiente'
+    return estado == 'generado' and bool(cluster.get('requiere_revision_editorial'))
+
+
 def obtener_reporte_calidad(fuente=None, desde=None, hasta=None):
     """
     Agrega métricas de metadata.quality por fuente.
@@ -1211,6 +1216,13 @@ def publicar_cluster(cluster_id):
         flash("Primero generá el artículo con IA", "info")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
+    if _bloquea_publicacion_por_revision_editorial(cluster):
+        flash(
+            "No se puede publicar hasta aprobar la revisión editorial en el detalle del cluster.",
+            "warning",
+        )
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
     redirect_to_cluster = request.form.get('return_to') == 'cluster_detalle'
     if request.form.get('save_photos_before_publish') == '1':
         try:
@@ -1245,6 +1257,25 @@ def publicar_cluster(cluster_id):
         flash(f"❌ Error: {resultado.get('mensaje', 'Desconocido')}", "danger")
         endpoint = 'cluster_detalle' if redirect_to_cluster else 'preview_articulo'
         return redirect(url_for(endpoint, cluster_id=cluster_id))
+
+
+@app.route("/aprobar-revision-editorial/<int:cluster_id>", methods=["POST"])
+def aprobar_revision_editorial(cluster_id):
+    cluster = obtener_cluster_db(cluster_id)
+    if not cluster:
+        flash("Cluster no encontrado", "danger")
+        return redirect(url_for('index'))
+
+    if not cluster.get('requiere_revision_editorial'):
+        flash("Este cluster ya no requiere revisión editorial.", "info")
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+    set_review_required = app.config.get(
+        "EDITORIAL_REVIEW_FLAG_SETTER", publicador.set_requiere_revision_editorial
+    )
+    set_review_required(cluster_id, False)
+    flash("Revisión editorial aprobada. Ya podés publicar.", "success")
+    return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
 
 @app.route("/upload-fotos/<int:cluster_id>", methods=["POST"])

@@ -134,6 +134,31 @@
       </div>
       {% endif %}
 
+      {% if estado == 'generado' and cluster.requiere_revision_editorial %}
+      <div class="alert alert-warning mb-4">
+        <h5 class="mb-2">⚠️ Revisión editorial obligatoria</h5>
+        <p class="mb-3">
+          No se puede publicar este artículo todavía porque el control editorial
+          marcó que requiere revisión humana. Revisalo y aprobá la revisión
+          editorial desde acá para volver a habilitar la publicación.
+        </p>
+        <div class="d-flex gap-2 flex-wrap">
+          <form
+            method="POST"
+            action="/aprobar-revision-editorial/{{ cluster.id }}"
+            class="d-inline"
+          >
+            <button type="submit" class="btn btn-warning">
+              Aprobar revisión editorial
+            </button>
+          </form>
+          <a href="/preview/{{ cluster.id }}" class="btn btn-outline-dark">
+            ✏️ Ver / Editar artículo
+          </a>
+        </div>
+      </div>
+      {% endif %}
+
       {% with messages = get_flashed_messages(with_categories=true) %} {% if
       messages %} {% for category, message in messages %}
       <div
@@ -313,12 +338,19 @@
           <hr />
           <div class="contenido-preview">{{ contenido_ia.articulo_html_panel }}</div>
           <hr />
+          {% if cluster.requiere_revision_editorial %}
+          <div class="alert alert-warning mb-3">
+            Publicación bloqueada: este cluster requiere aprobación editorial
+            humana antes de publicarse.
+          </div>
+          {% else %}
           <a
             href="/preview/{{ cluster.id }}"
             class="btn btn-success btn-xl mt-2"
           >
             🚀 Publicar en WordPress
           </a>
+          {% endif %}
         </div>
       </div>
       {% endif %}
@@ -372,9 +404,24 @@
           {% elif estado == 'generado' %}
           <h5 class="mb-3">Artículo listo ✅</h5>
           <div class="d-flex gap-2 justify-content-center flex-wrap">
+            {% if cluster.requiere_revision_editorial %}
+            <div class="alert alert-warning mb-0 text-start" style="max-width: 760px">
+              <strong>Publicación bloqueada.</strong>
+              Aprobá la revisión editorial para habilitar el flujo normal de publicación.
+            </div>
+            <form method="POST" action="/aprobar-revision-editorial/{{ cluster.id }}">
+              <button type="submit" class="btn btn-warning btn-xl">
+                Aprobar revisión editorial
+              </button>
+            </form>
+            <a href="/preview/{{ cluster.id }}" class="btn btn-outline-dark btn-xl">
+              ✏️ Ver / Editar artículo
+            </a>
+            {% else %}
             <a href="/preview/{{ cluster.id }}" class="btn btn-success btn-xl">
               🚀 Publicar en WordPress
             </a>
+            {% endif %}
             <form
               method="POST"
               action="/generar/{{ cluster.id }}"

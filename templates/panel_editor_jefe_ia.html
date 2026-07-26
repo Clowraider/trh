@@ -111,7 +111,7 @@
                   {% endif %}
                 </div>
                 <div class="d-flex gap-2">
-                  {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster %}
+                  {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
                     <button
                       type="button"
                       class="btn btn-sm btn-outline-success"
@@ -122,6 +122,10 @@
                     >
                       Elegir fotos
                     </button>
+                  {% elif (item.estado_publicacion or 'pendiente') == 'generado' and item.requiere_revision_editorial %}
+                    <span class="small text-warning-emphasis align-self-center">
+                      Aprobá la revisión editorial en el cluster para habilitar la publicación.
+                    </span>
                   {% endif %}
                   <form method="post" action="{{ url_for('descartar_cluster', cluster_id=item.cluster_id) }}" onsubmit="return confirm('¿Descartar este candidato?');">
                     <input type="hidden" name="return_to" value="editor_jefe_ia" />
@@ -133,7 +137,7 @@
               <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
               <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
               <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
-              {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster %}
+              {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
                 <div class="collapse mt-3" id="quick-publish-{{ item.cluster_id }}">
                   <div class="border rounded bg-light p-3">
                     <p class="small text-muted mb-3">
