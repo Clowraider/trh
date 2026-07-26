@@ -1,5 +1,7 @@
+import html
 import os
 import random
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +44,44 @@ def normalize_url_for_storage(url: str) -> str:
     return normalized
 
 
+def _strip_formatting_tags(value: str) -> str:
+    value = re.sub(r"<\s*br\s*/?\s*>", "\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"</?(?:p|div|section|article|li|ul|ol|h[1-6]|blockquote)\b[^>]*>", "\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"<[^>]+>", " ", value)
+    return html.unescape(value)
+
+
+def normalize_title_for_storage(title: str | None) -> str:
+    if not title:
+        return ""
+
+    normalized = _strip_formatting_tags(title)
+    return " ".join(normalized.split())
+
+
+def normalize_text_for_storage(text: str | None) -> str:
+    if not text:
+        return ""
+
+    normalized = _strip_formatting_tags(text)
+    lines = []
+
+    for line in normalized.splitlines():
+        collapsed = " ".join(line.split())
+        if collapsed:
+            lines.append(collapsed)
+
+    return "\n".join(lines)
+
+
+def normalize_image_url_for_storage(url: str | None) -> str | None:
+    if not url:
+        return None
+
+    normalized = url.strip()
+    return normalized or None
+
+
 def normalize_fecha_publicacion(fecha: datetime | None) -> datetime | None:
     if fecha is None:
         return None
@@ -50,6 +90,23 @@ def normalize_fecha_publicacion(fecha: datetime | None) -> datetime | None:
         fecha = fecha.replace(tzinfo=None)
 
     return fecha.replace(second=0, microsecond=0)
+
+
+def normalize_noticia_fields_for_storage(
+    *,
+    url: str,
+    titulo: str | None,
+    texto: str | None,
+    imagen: str | None,
+    fecha_publicacion: datetime | None,
+) -> tuple[str, str, str, str | None, datetime | None]:
+    return (
+        normalize_url_for_storage(url),
+        normalize_title_for_storage(titulo),
+        normalize_text_for_storage(texto),
+        normalize_image_url_for_storage(imagen),
+        normalize_fecha_publicacion(fecha_publicacion),
+    )
 
 
 def build_quality_flags(url: str | None, titulo: str | None, texto: str | None, fecha: datetime | None, imagen: str | None) -> dict:

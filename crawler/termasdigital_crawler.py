@@ -12,7 +12,7 @@ from common import (
     build_random_headers,
     build_quality_flags,
     get_connection,
-    normalize_fecha_publicacion,
+    normalize_noticia_fields_for_storage,
     normalize_url_for_storage,
     run_crawler_template,
 )
@@ -168,8 +168,13 @@ def extraer_texto_articulo(content):
 
 
 def guardar_noticia(url, titulo, fecha_pub, texto, imagen):
-    url = normalize_url_for_storage(url)
-    fecha_pub = normalize_fecha_publicacion(fecha_pub)
+    url, titulo, texto, imagen, fecha_pub = normalize_noticia_fields_for_storage(
+        url=url,
+        titulo=titulo,
+        texto=texto,
+        imagen=imagen,
+        fecha_publicacion=fecha_pub,
+    )
 
     # Regla solicitada: fecha_publicacion nunca vacía.
     # Si no se pudo extraer una fecha de publicación válida,

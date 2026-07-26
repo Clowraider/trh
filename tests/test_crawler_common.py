@@ -2,12 +2,23 @@ import importlib.util
 import sys
 import types
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 psycopg2_stub = types.ModuleType("psycopg2")
 setattr(psycopg2_stub, "connect", lambda **kwargs: None)
 sys.modules.setdefault("psycopg2", psycopg2_stub)
+
+psycopg2_extras_stub = types.ModuleType("psycopg2.extras")
+
+
+def _json_passthrough(value):
+    return value
+
+
+setattr(psycopg2_extras_stub, "Json", _json_passthrough)
+sys.modules.setdefault("psycopg2.extras", psycopg2_extras_stub)
 
 dotenv_stub = types.ModuleType("dotenv")
 setattr(dotenv_stub, "load_dotenv", lambda *args, **kwargs: None)
@@ -19,6 +30,36 @@ spec = importlib.util.spec_from_file_location("crawler_common", COMMON_PATH)
 assert spec is not None and spec.loader is not None
 common = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(common)
+sys.modules.setdefault("common", common)
+
+
+class RecordingCursor:
+    def __init__(self):
+        self.executed = []
+
+    def execute(self, query, params=None):
+        self.executed.append((query, params))
+
+    def fetchone(self):
+        return None
+
+    def close(self):
+        pass
+
+
+class RecordingConnection:
+    def __init__(self):
+        self.cursor_instance = RecordingCursor()
+        self.committed = False
+
+    def cursor(self):
+        return self.cursor_instance
+
+    def commit(self):
+        self.committed = True
+
+    def close(self):
+        pass
 
 
 class DummyLogger:
@@ -30,6 +71,34 @@ class DummyLogger:
 
 
 class TestCrawlerCommon(unittest.TestCase):
+    def test_normalize_text_for_storage_strips_tags_and_empty_lines(self):
+        raw = "  <p>Hello   <strong>world</strong></p>\n\n<div>Line   two</div><br>  <em>Line three</em>  "
+
+        normalized = common.normalize_text_for_storage(raw)
+
+        self.assertEqual(normalized, "Hello world\nLine two\nLine three")
+
+    def test_normalize_title_for_storage_collapses_whitespace_and_tags(self):
+        raw = "  <strong> Breaking   news </strong>\n  today  "
+
+        normalized = common.normalize_title_for_storage(raw)
+
+        self.assertEqual(normalized, "Breaking news today")
+
+    def test_normalize_image_url_for_storage_preserves_query_and_fragment(self):
+        raw = "  https://site.com/image.jpg?utm_source=x#fragment  "
+
+        normalized = common.normalize_image_url_for_storage(raw)
+
+        self.assertEqual(normalized, "https://site.com/image.jpg?utm_source=x#fragment")
+
+    def test_normalize_fecha_publicacion_removes_timezone_and_subminute_precision(self):
+        fecha = datetime(2026, 5, 29, 12, 30, 45, 123456, tzinfo=timezone.utc)
+
+        normalized = common.normalize_fecha_publicacion(fecha)
+
+        self.assertEqual(normalized, datetime(2026, 5, 29, 12, 30))
+
     def test_normalize_url_for_storage_removes_query_and_fragment(self):
         url = "https://site.com/nota/123?utm_source=x&fbclid=abc&id=99#fragment"
         normalized = common.normalize_url_for_storage(url)
@@ -141,6 +210,49 @@ class TestCrawlerCommon(unittest.TestCase):
             )
 
         self.assertEqual(seen, ["alta-1", "alta-2", "baja-1"])
+
+    def test_guardar_noticia_normalizes_fields_before_insert_for_all_crawlers(self):
+        crawler_files = [
+            "elliberal_crawler.py",
+            "nuevodiario_crawler.py",
+            "panorama_crawler.py",
+            "sursantiago_crawler.py",
+            "termasdigital_crawler.py",
+        ]
+        expected_text = "First paragraph\nSecond paragraph\n" + " ".join(["extra"] * 80)
+
+        for crawler_file in crawler_files:
+            with self.subTest(crawler_file=crawler_file):
+                module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
+                spec = importlib.util.spec_from_file_location(crawler_file.replace(".py", ""), module_path)
+                assert spec is not None and spec.loader is not None
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                connection = RecordingConnection()
+
+                with patch.object(module, "get_connection", return_value=connection), \
+                     patch.object(module, "build_quality_flags", return_value={"quality": {}}), \
+                     patch.object(module.logger, "info"), \
+                     patch.object(module.logger, "warning"):
+                    saved = module.guardar_noticia(
+                        " https://site.com/article?utm_source=x#fragment ",
+                        "  <strong> Breaking   title </strong>  ",
+                        datetime(2026, 5, 29, 12, 30, 45, 111111, tzinfo=timezone.utc),
+                        "<p> First   paragraph </p>\n\n<p> Second <em> paragraph </em> </p>" + " extra" * 80,
+                        " https://site.com/image.jpg?foo=1#frag ",
+                    )
+
+                self.assertTrue(saved)
+                self.assertTrue(connection.committed)
+
+                insert_query, insert_params = connection.cursor_instance.executed[-1]
+                self.assertIn("INSERT INTO noticias_historico", insert_query)
+                self.assertEqual(insert_params[3], "https://site.com/article")
+                self.assertEqual(insert_params[4], "Breaking title")
+                self.assertEqual(insert_params[5], expected_text)
+                self.assertEqual(insert_params[6], "https://site.com/image.jpg?foo=1#frag")
+                self.assertEqual(insert_params[7], datetime(2026, 5, 29, 12, 30))
 
 
 if __name__ == "__main__":
