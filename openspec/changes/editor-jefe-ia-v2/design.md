@@ -57,7 +57,7 @@ The design keeps humans in charge of publication, externalizes prompts/rules to 
 
 ## Prompt and rules externalization
 
-- `prompt_loader.py` requires env vars that point to prompt/rules files.
+- `trh/infrastructure/prompt_loader.py` requires env vars that point to prompt/rules files.
 - Relative paths resolve from the project root, not the current working directory.
 - `editorial_control.py` loads editorial rules JSON and the editorial-control system prompt from files.
 - The feature fails closed when the configured prompt/rules files are missing, unreadable, malformed, or invalid.

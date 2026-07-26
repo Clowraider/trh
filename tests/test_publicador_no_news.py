@@ -1,4 +1,4 @@
-import publicador
+from trh.publication import publicador
 import pytest
 from psycopg2 import errors as psycopg2_errors
 

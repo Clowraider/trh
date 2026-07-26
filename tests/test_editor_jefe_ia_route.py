@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-import editor_jefe_ia as feature
+from trh.editorial import editor_jefe_ia as feature
 
 
 DEFAULT_MINIMUM_EDITORIAL_SCORE = "50"

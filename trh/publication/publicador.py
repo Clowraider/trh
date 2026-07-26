@@ -26,8 +26,8 @@ from string import Template
 from datetime import datetime
 from psycopg2.extras import RealDictCursor
 
-from env_loader import load_project_env
-from prompt_loader import load_prompt_text
+from trh.infrastructure.env_loader import load_project_env
+from trh.infrastructure.prompt_loader import load_prompt_text
 
 # =============================================================================
 # CONFIGURACIÓN

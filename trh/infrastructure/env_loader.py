@@ -2,7 +2,7 @@ from pathlib import Path
 import os
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 
 

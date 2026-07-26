@@ -1,4 +1,4 @@
-import editorial_control as control
+from trh.editorial import editorial_control as control
 
 
 def article(title="Título"):

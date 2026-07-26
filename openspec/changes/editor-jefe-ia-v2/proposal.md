@@ -13,8 +13,8 @@ The current proposal/spec/design still describe an intentionally smaller first s
 - `editor_jefe_ia.py` persists saved recommendations and splits AI selection into `SELECTION_BATCH_LIMIT` batches of five.
 - `app.py` loads persisted recommendations into `/editor-jefe-ia`, exposes `/editor-jefe-ia/generar-guardadas`, enriches saved rows with current cluster state, blocks quick publish when `requiere_revision_editorial` is true, and adds `/aprobar-revision-editorial/<id>` for the human approval gate.
 - `editorial_control.py` wraps article generation with one review pass plus at most one regeneration attempt, and sets `requiere_revision_editorial` when review does not pass cleanly.
-- `prompt_loader.py` resolves prompt/rules files from required env-configured paths relative to the project root.
-- `html_sanitizer.py` sanitizes generated article HTML before panel rendering.
+- `trh/infrastructure/prompt_loader.py` resolves prompt/rules files from required env-configured paths relative to the project root.
+- `trh/infrastructure/html_sanitizer.py` sanitizes generated article HTML before panel rendering.
 
 ## Scope
 

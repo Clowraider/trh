@@ -1,7 +1,7 @@
 import pytest
 from psycopg2 import errors as psycopg2_errors
 
-import editor_jefe_ia as feature
+from trh.editorial import editor_jefe_ia as feature
 
 
 class RecordingCursor:

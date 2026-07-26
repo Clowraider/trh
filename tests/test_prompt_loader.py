@@ -6,8 +6,7 @@ import sys
 
 import pytest
 
-import env_loader
-import prompt_loader
+from trh.infrastructure import env_loader, prompt_loader
 
 
 def test_load_prompt_text_returns_file_contents_when_configured(tmp_path):
@@ -126,19 +125,19 @@ def test_load_json_file_resolves_relative_paths_from_project_root(monkeypatch, t
     ("module_name", "env_var", "attribute_name", "override_text"),
     [
         (
-            "publicador",
+            "trh.publication.publicador",
             "ARTICLE_WRITER_SYSTEM_PROMPT_FILE",
             "ARTICLE_WRITER_SYSTEM_PROMPT",
             "Writer system override",
         ),
         (
-            "editor_jefe_ia",
+            "trh.editorial.editor_jefe_ia",
             "EDITOR_JEFE_SYSTEM_PROMPT_FILE",
             "EDITOR_JEFE_SYSTEM_PROMPT",
             "Editor jefe override",
         ),
         (
-            "editorial_control",
+            "trh.editorial.editorial_control",
             "EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE",
             "EDITORIAL_CONTROL_SYSTEM_PROMPT",
             "Editorial control override",
@@ -182,7 +181,7 @@ def test_editorial_control_loads_rules_override_from_env_file(monkeypatch, tmp_p
     )
     monkeypatch.setenv("EDITORIAL_CONTROL_RULES_FILE", str(rules_file))
 
-    module = importlib.import_module("editorial_control")
+    module = importlib.import_module("trh.editorial.editorial_control")
     try:
         reloaded = importlib.reload(module)
 
@@ -209,7 +208,7 @@ def test_editorial_control_fails_when_rules_file_is_invalid(monkeypatch, tmp_pat
     )
     monkeypatch.setenv("EDITORIAL_CONTROL_RULES_FILE", str(rules_file))
 
-    module = importlib.import_module("editorial_control")
+    module = importlib.import_module("trh.editorial.editorial_control")
     try:
         with pytest.raises(RuntimeError, match="EDITORIAL_CONTROL_RULES_FILE") as excinfo:
             importlib.reload(module)
@@ -232,7 +231,7 @@ def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", str(prompt_file))
 
-    publicador = importlib.import_module("publicador")
+    publicador = importlib.import_module("trh.publication.publicador")
     try:
         reloaded = importlib.reload(publicador)
 
@@ -275,7 +274,7 @@ def test_publicador_fails_when_user_prompt_template_misses_required_placeholders
     prompt_file.write_text(template_text, encoding="utf-8")
     monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", str(prompt_file))
 
-    publicador = importlib.import_module("publicador")
+    publicador = importlib.import_module("trh.publication.publicador")
     try:
         with pytest.raises(RuntimeError, match=missing_placeholder):
             importlib.reload(publicador)
@@ -291,7 +290,7 @@ def test_module_import_fails_when_required_prompt_env_var_is_missing(monkeypatch
     original_value = os.environ.get("EDITOR_JEFE_SYSTEM_PROMPT_FILE")
     monkeypatch.delenv("EDITOR_JEFE_SYSTEM_PROMPT_FILE", raising=False)
 
-    module = importlib.import_module("editor_jefe_ia")
+    module = importlib.import_module("trh.editorial.editor_jefe_ia")
     try:
         with pytest.raises(RuntimeError, match="EDITOR_JEFE_SYSTEM_PROMPT_FILE"):
             importlib.reload(module)
@@ -352,10 +351,12 @@ def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
     original_modules = {}
     for module_name in (
         "app",
-        "publicador",
-        "publicapress",
-        "editorial_control",
-        "editor_jefe_ia",
+        "trh.publication.publicador",
+        "trh.publication.publicapress",
+        "trh.publication",
+        "trh.editorial.editorial_control",
+        "trh.editorial.editor_jefe_ia",
+        "trh.editorial",
         "pipeline.seleccionar_publicables",
     ):
         original_modules[module_name] = sys.modules.pop(module_name, None)
@@ -368,22 +369,24 @@ def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
             panel.publicador.ARTICLE_WRITER_USER_PROMPT_TEMPLATE
             == "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block"
         )
-        assert sys.modules["editor_jefe_ia"].EDITOR_JEFE_SYSTEM_PROMPT == (
+        assert sys.modules["trh.editorial.editor_jefe_ia"].EDITOR_JEFE_SYSTEM_PROMPT == (
             "Editor jefe override"
         )
-        assert sys.modules["editorial_control"].EDITORIAL_CONTROL_SYSTEM_PROMPT == (
+        assert sys.modules["trh.editorial.editorial_control"].EDITORIAL_CONTROL_SYSTEM_PROMPT == (
             "Editorial control override"
         )
-        assert sys.modules["editorial_control"].EDITORIAL_CONTROL_RULES == [
+        assert sys.modules["trh.editorial.editorial_control"].EDITORIAL_CONTROL_RULES == [
             {"code": "neutral_tone", "instruction": "Use neutral tone."}
         ]
     finally:
         for module_name in (
             "app",
-            "publicador",
-            "publicapress",
-            "editorial_control",
-            "editor_jefe_ia",
+            "trh.publication.publicador",
+            "trh.publication.publicapress",
+            "trh.publication",
+            "trh.editorial.editorial_control",
+            "trh.editorial.editor_jefe_ia",
+            "trh.editorial",
             "pipeline.seleccionar_publicables",
         ):
             sys.modules.pop(module_name, None)

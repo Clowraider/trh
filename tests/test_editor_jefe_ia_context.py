@@ -11,7 +11,7 @@ except ModuleNotFoundError:
     extras_stub.RealDictCursor = type("RealDictCursor", (), {})
     sys.modules["psycopg2.extras"] = extras_stub
 
-from editor_jefe_ia import build_editorial_context
+from trh.editorial import editor_jefe_ia as feature
 from pipeline import seleccionar_publicables as scoring
 
 
@@ -77,9 +77,15 @@ def score_inputs(monkeypatch):
             return value
         return load
 
-    monkeypatch.setattr("editor_jefe_ia.obtener_recientes_por_cluster", loader(recent))
-    monkeypatch.setattr("editor_jefe_ia.obtener_keywords_por_cluster", loader(score_keywords))
-    monkeypatch.setattr("editor_jefe_ia.obtener_prioridades", loader(priorities))
+    monkeypatch.setattr(
+        feature, "obtener_recientes_por_cluster", loader(recent)
+    )
+    monkeypatch.setattr(
+        feature, "obtener_keywords_por_cluster", loader(score_keywords)
+    )
+    monkeypatch.setattr(
+        feature, "obtener_prioridades", loader(priorities)
+    )
     frozen = datetime(2026, 3, 7, 12, tzinfo=timezone.utc)
     monkeypatch.setattr(scoring, "_ahora_utc", lambda: frozen)
     return recent, score_keywords, priorities, calls
@@ -134,7 +140,7 @@ def test_eligibility_score_connection_and_ranked_news_are_read_only(score_inputs
         return conn
 
     keywords = {10: ["economia"], 20: ["mundo"]}
-    result = build_editorial_context(factory, lambda used_conn, ids: keywords)
+    result = feature.build_editorial_context(factory, lambda used_conn, ids: keywords)
 
     assert factory_calls == [True]
     assert loader_connections == [conn, conn, conn]
@@ -179,7 +185,9 @@ def test_context_normalizes_and_bounds_cluster_keywords_and_news(score_inputs):
     conn = ReadOnlyConnection(eligible, ranked_news)
     raw_keywords = [" z ", "", "a", "a ", "b" * 130, "y", "x", "w", "v", "u"]
 
-    result = build_editorial_context(lambda: conn, lambda _conn, _ids: {10: raw_keywords})
+    result = feature.build_editorial_context(
+        lambda: conn, lambda _conn, _ids: {10: raw_keywords}
+    )
     candidate = result[0]
 
     assert candidate["title"] == ("A " + "é" * 400)[:300]
@@ -200,13 +208,15 @@ def test_null_cluster_title_falls_back_and_invalid_timestamp_fails_closed(score_
     )
 
     with pytest.raises(ValueError, match="effective timestamp"):
-        build_editorial_context(lambda: conn, lambda _conn, _ids: {10: []})
+        feature.build_editorial_context(lambda: conn, lambda _conn, _ids: {10: []})
     assert conn.closed
 
     clean_conn = ReadOnlyConnection(
         [cluster(10, valid_time, titulo_representativo=None)],
         [news(1, 10, valid_time, texto_completo=None)],
     )
-    candidate = build_editorial_context(lambda: clean_conn, lambda _conn, _ids: {10: []})[0]
+    candidate = feature.build_editorial_context(
+        lambda: clean_conn, lambda _conn, _ids: {10: []}
+    )[0]
     assert candidate["title"] == "(Sin título)"
     assert candidate["recent_news"][0]["excerpt"] == ""

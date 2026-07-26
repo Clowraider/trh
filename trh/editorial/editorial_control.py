@@ -1,8 +1,8 @@
 import logging
 
-import publicador
+from trh.publication import publicador
 
-from prompt_loader import load_json_file, load_prompt_text
+from trh.infrastructure.prompt_loader import load_json_file, load_prompt_text
 
 
 logger = logging.getLogger(__name__)

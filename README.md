@@ -211,11 +211,13 @@ En el panel de cluster se puede elegir foto principal/secundarias desde las noti
 - `crawler/`: crawlers por fuente.
 - `pipeline/`: procesamiento (embeddings, clustering, keywords, selección).
 - `deploy/`: archivos sugeridos para systemd/nginx.
-- `scripts/`: utilidades de entorno e inicialización.
+- `scripts/`: utilidades de entorno, inicialización y wrappers ejecutables.
 - `skills/`: skills/protocolos auxiliares del proyecto.
-- raíz (`app.py`, `proceso.py`, `publicador.py`, `publicapress.py`): orquestación/panel/publicación.
+- raíz (`app.py`, `proceso.py`): orchestration entrypoints.
+- `trh/editorial/`: reusable editorial-selection and editorial-review modules.
+- `trh/publication/`: reusable article-generation and WordPress-publication modules.
 
-> Compatibilidad: se mantienen wrappers en raíz (`embedding_archivo.py`, `cluster_noticias.py`, `extraer_keywords_ner.py`, `seleccionar_publicables.py`, `correccion_sur_santiago.py`) para no romper llamadas existentes.
+> Compatibilidad: los wrappers ejecutables viven en `scripts/` (`scripts/embedding_archivo.py`, `scripts/cluster_noticias.py`, `scripts/extraer_keywords_ner.py`, `scripts/seleccionar_publicables.py`), mientras que otros entrypoints de raíz como `correccion_sur_santiago.py` siguen en su ubicación actual.
 
 ## Estructura de esquema
 

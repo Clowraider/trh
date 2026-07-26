@@ -15,6 +15,5 @@ venv/
 static/uploads/tmp/
 
 # Virtual env
-trh/
 venv/
 .venv/

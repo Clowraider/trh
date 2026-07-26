@@ -11,7 +11,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-from prompt_loader import load_prompt_text
+from trh.infrastructure.prompt_loader import load_prompt_text
 
 from pipeline.seleccionar_publicables import (
     calcular_score_editorial,

@@ -29,7 +29,7 @@ from urllib.parse import urlparse
 from psycopg2.extras import RealDictCursor
 from PIL import Image, ImageDraw, ImageFont
 
-from env_loader import load_project_env
+from trh.infrastructure.env_loader import load_project_env
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -74,7 +74,9 @@ WATERMARK_LOGO_PATH = os.getenv("WATERMARK_LOGO_PATH", "")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 TEMP_UPLOAD_BASE_DIR = os.path.join(PROJECT_ROOT, 'static', 'uploads', 'tmp')
 
 

@@ -1,6 +1,6 @@
 import app as panel
 
-from html_sanitizer import sanitize_article_html
+from trh.infrastructure.html_sanitizer import sanitize_article_html
 
 
 def test_sanitize_article_html_removes_scripts_events_and_javascript_urls():
