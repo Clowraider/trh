@@ -19,7 +19,6 @@ Funciones exportadas (las usa app.py / el panel):
 import os
 import logging
 import psycopg2
-from psycopg2 import errors as psycopg2_errors
 import requests
 import json
 import time
@@ -314,11 +313,6 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision):
                 (requiere_revision, cluster_id),
             )
         conn.commit()
-    except psycopg2_errors.UndefinedColumn:
-        conn.rollback()
-        logger.warning(
-            "No existe clusters_editoriales.requiere_revision_editorial; ejecutar migración manual."
-        )
     finally:
         conn.close()
 

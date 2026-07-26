@@ -1,4 +1,6 @@
 import publicador
+import pytest
+from psycopg2 import errors as psycopg2_errors
 
 
 class RecordingCursor:
@@ -15,6 +17,11 @@ class RecordingCursor:
         self.connection.executed.append((sql, params))
 
 
+class FailingCursor(RecordingCursor):
+    def execute(self, sql, params=None):
+        raise psycopg2_errors.UndefinedColumn("missing column")
+
+
 class RecordingConnection:
     def __init__(self):
         self.executed = []
@@ -26,6 +33,9 @@ class RecordingConnection:
 
     def commit(self):
         self.commit_count += 1
+
+    def rollback(self):
+        raise AssertionError("rollback should not be used for removed schema compatibility")
 
     def close(self):
         self.closed = True
@@ -82,3 +92,30 @@ def test_generar_articulo_para_cluster_with_no_news_does_not_call_generation_ste
     assert result["mensaje"] == "El cluster no tiene noticias asociadas."
     assert len(initial_conn.executed) == 1
     assert len(restore_conn.executed) == 1
+
+
+def test_set_requiere_revision_editorial_updates_current_schema(monkeypatch):
+    conn = RecordingConnection()
+
+    monkeypatch.setattr(publicador, "get_connection", lambda: conn)
+
+    publicador.set_requiere_revision_editorial(23, True)
+
+    assert conn.commit_count == 1
+    assert conn.closed
+    assert "SET requiere_revision_editorial = %s" in conn.executed[0][0]
+    assert conn.executed[0][1] == (True, 23)
+
+
+def test_set_requiere_revision_editorial_propagates_missing_schema_errors(monkeypatch):
+    class FailingConnection(RecordingConnection):
+        def cursor(self):
+            return FailingCursor(self)
+
+    conn = FailingConnection()
+    monkeypatch.setattr(publicador, "get_connection", lambda: conn)
+
+    with pytest.raises(psycopg2_errors.UndefinedColumn):
+        publicador.set_requiere_revision_editorial(23, False)
+
+    assert conn.closed

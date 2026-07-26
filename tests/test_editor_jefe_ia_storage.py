@@ -1,3 +1,6 @@
+import pytest
+from psycopg2 import errors as psycopg2_errors
+
 import editor_jefe_ia as feature
 
 
@@ -18,6 +21,11 @@ class RecordingCursor:
         return self.connection.rows
 
 
+class UndefinedColumnCursor(RecordingCursor):
+    def execute(self, sql, params=None):
+        raise psycopg2_errors.UndefinedColumn("missing column")
+
+
 class RecordingConnection:
     def __init__(self, rows=None):
         self.rows = rows or []
@@ -31,6 +39,9 @@ class RecordingConnection:
 
     def commit(self):
         self.commit_count += 1
+
+    def rollback(self):
+        raise AssertionError("rollback should not be used for removed schema compatibility")
 
     def close(self):
         self.closed = True
@@ -49,13 +60,25 @@ def test_load_saved_recommendations_ensures_storage_and_returns_rows():
 
     assert result == rows
     assert conn.closed
-    assert conn.commit_count == 1
-    assert "CREATE TABLE IF NOT EXISTS editor_jefe_ia_recommendations" in conn.executed[0][0]
-    assert "CREATE INDEX IF NOT EXISTS idx_editor_jefe_ia_recommendations_recommended_at" in conn.executed[1][0]
-    assert "SELECT r.cluster_id, r.title, r.reason, r.editorial_score" in conn.executed[2][0]
-    assert "LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id" in conn.executed[2][0]
-    assert "COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion" in conn.executed[2][0]
-    assert "COALESCE(ce.requiere_revision_editorial, FALSE) AS requiere_revision_editorial" in conn.executed[2][0]
+    assert conn.commit_count == 0
+    assert "SELECT r.cluster_id, r.title, r.reason, r.editorial_score" in conn.executed[0][0]
+    assert "LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id" in conn.executed[0][0]
+    assert "COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion" in conn.executed[0][0]
+    assert "COALESCE(ce.requiere_revision_editorial, FALSE) AS requiere_revision_editorial" in conn.executed[0][0]
+
+
+def test_load_saved_recommendations_propagates_missing_schema_errors():
+    class UndefinedColumnConnection(RecordingConnection):
+        def cursor(self, *args, **kwargs):
+            assert not args and not kwargs
+            return UndefinedColumnCursor(self)
+
+    conn = UndefinedColumnConnection()
+
+    with pytest.raises(psycopg2_errors.UndefinedColumn):
+        feature.load_saved_recommendations(lambda: conn)
+
+    assert conn.closed
 
 
 def test_save_recommendations_ensures_storage_and_inserts_each_selection():
@@ -86,13 +109,11 @@ def test_save_recommendations_ensures_storage_and_inserts_each_selection():
     feature.save_recommendations(lambda: conn, selections)
 
     assert conn.closed
-    assert conn.commit_count == 2
-    assert "CREATE TABLE IF NOT EXISTS editor_jefe_ia_recommendations" in conn.executed[0][0]
-    assert "CREATE INDEX IF NOT EXISTS idx_editor_jefe_ia_recommendations_recommended_at" in conn.executed[1][0]
+    assert conn.commit_count == 1
     insert_statements = [sql for sql, _ in conn.executed if sql.startswith("INSERT INTO editor_jefe_ia_recommendations")]
     assert len(insert_statements) == 2
-    assert conn.executed[2][1][0] == 7
-    assert conn.executed[3][1][0] == 8
+    assert conn.executed[0][1][0] == 7
+    assert conn.executed[1][1][0] == 8
 
 
 def test_save_recommendations_skips_empty_input_without_connection():
@@ -109,10 +130,8 @@ def test_delete_saved_recommendation_ensures_storage_and_deletes_target_cluster(
     feature.delete_saved_recommendation(lambda: conn, 7)
 
     assert conn.closed
-    assert conn.commit_count == 2
-    assert "CREATE TABLE IF NOT EXISTS editor_jefe_ia_recommendations" in conn.executed[0][0]
-    assert "CREATE INDEX IF NOT EXISTS idx_editor_jefe_ia_recommendations_recommended_at" in conn.executed[1][0]
-    assert conn.executed[2] == (
+    assert conn.commit_count == 1
+    assert conn.executed[0] == (
         "DELETE FROM editor_jefe_ia_recommendations WHERE cluster_id = %s",
         (7,),
     )

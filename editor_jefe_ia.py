@@ -7,7 +7,6 @@ import re
 import time
 import unicodedata
 
-from psycopg2 import errors as psycopg2_errors
 import requests
 
 logger = logging.getLogger(__name__)
@@ -179,25 +178,6 @@ SELECTION_BATCH_LIMIT = 5
 PAYLOAD_BYTE_LIMIT = 48_000
 RESPONSE_TOKEN_LIMIT = 1_200
 
-_RECOMMENDATIONS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS editor_jefe_ia_recommendations (
-    cluster_id bigint PRIMARY KEY REFERENCES clusters_editoriales(id) ON DELETE CASCADE,
-    title text NOT NULL,
-    reason text NOT NULL,
-    editorial_score double precision NOT NULL,
-    technical_score double precision NOT NULL,
-    news_count integer NOT NULL,
-    source_count integer NOT NULL,
-    newest_at timestamptz NOT NULL,
-    recommended_at timestamptz NOT NULL DEFAULT NOW()
-)
-"""
-
-_RECOMMENDATIONS_INDEX_SQL = """
-CREATE INDEX IF NOT EXISTS idx_editor_jefe_ia_recommendations_recommended_at
-ON editor_jefe_ia_recommendations (recommended_at DESC)
-"""
-
 _LOAD_RECOMMENDATIONS_SQL = """
 SELECT
     r.cluster_id,
@@ -211,24 +191,6 @@ SELECT
     r.recommended_at,
     COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion,
     COALESCE(ce.requiere_revision_editorial, FALSE) AS requiere_revision_editorial
-FROM editor_jefe_ia_recommendations r
-LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id
-ORDER BY r.recommended_at DESC, r.cluster_id DESC
-"""
-
-_LOAD_RECOMMENDATIONS_FALLBACK_SQL = """
-SELECT
-    r.cluster_id,
-    r.title,
-    r.reason,
-    r.editorial_score,
-    r.technical_score,
-    r.news_count,
-    r.source_count,
-    r.newest_at,
-    r.recommended_at,
-    COALESCE(ce.estado_publicacion, 'pendiente') AS estado_publicacion,
-    FALSE AS requiere_revision_editorial
 FROM editor_jefe_ia_recommendations r
 LEFT JOIN clusters_editoriales ce ON ce.id = r.cluster_id
 ORDER BY r.recommended_at DESC, r.cluster_id DESC
@@ -382,24 +344,11 @@ class OpenRouterSelectionClient:
         raise _failure("provider_failure", "Selection provider unavailable")
 
 
-def _ensure_recommendations_storage(conn):
-    with conn.cursor() as cursor:
-        cursor.execute(_RECOMMENDATIONS_TABLE_SQL)
-        cursor.execute(_RECOMMENDATIONS_INDEX_SQL)
-    conn.commit()
-
-
 def load_saved_recommendations(connection_factory):
     conn = connection_factory()
     try:
-        _ensure_recommendations_storage(conn)
         with conn.cursor() as cursor:
-            try:
-                cursor.execute(_LOAD_RECOMMENDATIONS_SQL)
-            except psycopg2_errors.UndefinedColumn:
-                if hasattr(conn, "rollback"):
-                    conn.rollback()
-                cursor.execute(_LOAD_RECOMMENDATIONS_FALLBACK_SQL)
+            cursor.execute(_LOAD_RECOMMENDATIONS_SQL)
             return cursor.fetchall()
     finally:
         conn.close()
@@ -410,7 +359,6 @@ def save_recommendations(connection_factory, selections):
         return
     conn = connection_factory()
     try:
-        _ensure_recommendations_storage(conn)
         with conn.cursor() as cursor:
             for item in selections:
                 cursor.execute(
@@ -434,7 +382,6 @@ def save_recommendations(connection_factory, selections):
 def delete_saved_recommendation(connection_factory, cluster_id):
     conn = connection_factory()
     try:
-        _ensure_recommendations_storage(conn)
         with conn.cursor() as cursor:
             cursor.execute(_DELETE_RECOMMENDATION_SQL, (cluster_id,))
         conn.commit()
