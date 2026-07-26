@@ -4,12 +4,12 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, urldefrag
 import time
 import re
-import random
 import hashlib
 from datetime import datetime
 import logging
 
 from common import (
+    build_random_headers,
     build_quality_flags,
     get_connection,
     normalize_fecha_publicacion,
@@ -29,10 +29,6 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://www.elliberal.com.ar"
 DOMAIN = urlparse(BASE_URL).netloc
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-]
-
 EXCLUDE_PATHS = [
     '/autor/',
     '/categoria/',
@@ -45,16 +41,6 @@ EXCLUDE_PATHS = [
 MAX_URLS_POR_TANDA = 30
 MAX_NOTICIAS_POR_EJECUCION = 100
 DELAY = 2.5
-
-# =================================================
-
-
-def get_random_headers():
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "es-AR,es;q=0.9"
-    }
-
 
 def clean_url(url):
     return urldefrag(url)[0].rstrip('/')
@@ -363,7 +349,7 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
 
     response = session.get(
         url,
-        headers=get_random_headers(),
+        headers=build_random_headers("es-AR,es;q=0.9"),
         timeout=30
     )
 

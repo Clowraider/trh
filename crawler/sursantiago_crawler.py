@@ -4,12 +4,12 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse, urldefrag
 import time
 import re
-import random
 import hashlib
 from datetime import datetime
 import logging
 
 from common import (
+    build_random_headers,
     build_quality_flags,
     get_connection,
     normalize_fecha_publicacion,
@@ -25,9 +25,6 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://sursantiago.com.ar"
 DOMAIN = urlparse(BASE_URL).netloc
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
-]
 EXCLUDE_PATHS = [
     '/wp-admin/', '/wp-includes/', '/clasificados', '/politicas', '/modal',
     '/audios', '/galerias', '/extras', '/widget', '/api/'
@@ -36,15 +33,6 @@ MAX_URLS_POR_TANDA = 30
 MAX_NOTICIAS_POR_EJECUCION = 50
 DELAY = 2.8
 MAX_RETRIES = 3
-
-
-def get_random_headers():
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept-Language": "es-ES,es;q=0.9"
-    }
-
-
 def clean_url(url):
     return urldefrag(url)[0].rstrip('/')
 
@@ -287,7 +275,7 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = session.get(url, headers=get_random_headers(), timeout=30)
+            response = session.get(url, headers=build_random_headers(), timeout=30)
             if response.status_code == 200:
                 break
             time.sleep(3 * (attempt + 1))

@@ -55,6 +55,20 @@ class TestCrawlerCommon(unittest.TestCase):
         self.assertTrue(quality["imagen_ok"])
         self.assertTrue(quality["url_limpia_ok"])
 
+    def test_build_random_headers_uses_shared_user_agents(self):
+        with patch.object(common.random, "choice", return_value="selected-agent") as choice_mock:
+            headers = common.build_random_headers()
+
+        choice_mock.assert_called_once_with(common.USER_AGENTS)
+        self.assertEqual(headers["User-Agent"], "selected-agent")
+        self.assertEqual(headers["Accept-Language"], "es-ES,es;q=0.9")
+
+    def test_build_random_headers_allows_accept_language_override(self):
+        with patch.object(common.random, "choice", return_value=common.USER_AGENTS[0]):
+            headers = common.build_random_headers("es-AR,es;q=0.9")
+
+        self.assertEqual(headers["Accept-Language"], "es-AR,es;q=0.9")
+
     def test_run_crawler_template_limits_to_100(self):
         source = "Test Source"
         calls = {"processed": 0, "marked": 0}

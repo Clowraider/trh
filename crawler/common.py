@@ -13,6 +13,15 @@ from dotenv import load_dotenv
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:138.0) Gecko/20100101 Firefox/138.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:138.0) Gecko/20100101 Firefox/138.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0",
+]
+
 
 def get_connection():
     return psycopg2.connect(
@@ -57,6 +66,13 @@ def build_quality_flags(url: str | None, titulo: str | None, texto: str | None, 
             "titulo_len": titulo_len,
             "texto_len": texto_len,
         }
+    }
+
+
+def build_random_headers(accept_language: str = "es-ES,es;q=0.9") -> dict[str, str]:
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept-Language": accept_language,
     }
 
 
