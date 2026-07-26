@@ -582,6 +582,42 @@ def listar_keywords_prioridad(q=None):
         conn.close()
 
 
+def listar_keywords_prioridad_activas():
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT keyword, activo
+                FROM keywords_prioridad
+                WHERE activo = TRUE
+                ORDER BY keyword ASC
+                """
+            )
+            return cur.fetchall()
+    finally:
+        conn.close()
+
+
+def build_cluster_keywords_for_panel(keywords_por_cluster, priority_keywords_rows):
+    priority_keywords = {
+        normalizar_keyword_minima(row.get('keyword'))
+        for row in priority_keywords_rows
+        if row.get('activo') and normalizar_keyword_minima(row.get('keyword'))
+    }
+
+    return {
+        cluster_id: [
+            {
+                'label': keyword,
+                'is_priority': normalizar_keyword_minima(keyword) in priority_keywords,
+            }
+            for keyword in keywords
+        ]
+        for cluster_id, keywords in keywords_por_cluster.items()
+    }
+
+
 # =============================================================================
 # RUTAS
 # =============================================================================
@@ -629,6 +665,10 @@ def index():
 
         cluster_ids = [c['id'] for c in clusters]
         keywords_por_cluster = obtener_keywords_por_clusters_ids(conn, cluster_ids)
+        keywords_por_cluster = build_cluster_keywords_for_panel(
+            keywords_por_cluster,
+            listar_keywords_prioridad_activas(),
+        )
     finally:
         conn.close()
 

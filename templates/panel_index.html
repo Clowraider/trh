@@ -44,6 +44,12 @@
         color: #0d6efd;
       }
 
+      .priority-keyword {
+        color: #0d6efd;
+        border-color: #0d6efd !important;
+        background-color: rgba(13, 110, 253, 0.08) !important;
+      }
+
       /* Secciones de grupos */
       .section-title {
         font-size: 0.85rem;
@@ -181,11 +187,12 @@
                     {% for kw in kws[:8] %}
                     <button
                       type="button"
-                      class="badge text-bg-light border me-1 mb-1"
+                      class="badge border me-1 mb-1 {{ 'priority-keyword' if kw.is_priority else 'text-bg-light' }}"
+                      data-priority-keyword="{{ 'true' if kw.is_priority else 'false' }}"
                       style="border: 0"
-                      onclick="openKeywordModal('{{ kw|replace("'", "&#39;") }}'); event.stopPropagation();"
+                      onclick="openKeywordModal('{{ kw.label|replace("'", "&#39;") }}'); event.stopPropagation();"
                     >
-                      {{ kw }}
+                      {{ kw.label }}
                     </button>
                     {% endfor %}
                   </div>

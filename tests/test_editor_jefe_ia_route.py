@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 
 import pytest
@@ -955,6 +956,67 @@ def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatc
     assert response.status_code == 200 and b"resultado v\xc3\xa1lido" in response.data
     assert factory_calls == [True] and seams == [conn] * 4
     assert payloads[0]["candidates"][0]["title"] == "Mapped cluster"
+
+
+def test_build_cluster_keywords_for_panel_marks_priority_keywords_with_normalization():
+    import app as panel
+
+    result = panel.build_cluster_keywords_for_panel(
+        {7: ["  Milei  ", "economía", "Otra"]},
+        [
+            {"keyword": "milei", "activo": True},
+            {"keyword": " ECONOMÍA ", "activo": True},
+            {"keyword": "otra", "activo": False},
+        ],
+    )
+
+    assert result == {
+        7: [
+            {"label": "  Milei  ", "is_priority": True},
+            {"label": "economía", "is_priority": True},
+            {"label": "Otra", "is_priority": False},
+        ]
+    }
+
+
+def test_index_highlights_existing_priority_keywords_in_cluster_list(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "listar_todos_los_clusters",
+        lambda: [{
+            "id": 7,
+            "score": 42,
+            "titulo_representativo": "Cluster destacado",
+            "cantidad_noticias": 3,
+            "cantidad_fuentes": 2,
+            "ultima_noticia": None,
+            "estado_publicacion": "pendiente",
+            "url_wp": None,
+        }],
+    )
+    monkeypatch.setattr(panel, "generar_candidatos", lambda _conn: [{"id": 7, "score_editorial": 55.0}])
+    monkeypatch.setattr(panel, "obtener_keywords_por_clusters_ids", lambda _conn, _ids: {7: ["  Milei  ", "economía"]})
+    monkeypatch.setattr(
+        panel,
+        "listar_keywords_prioridad_activas",
+        lambda q=None: [{"keyword": "milei", "activo": True}],
+    )
+
+    class Connection:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    response = panel.app.test_client().get("/")
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert 'data-priority-keyword="true"' in html
+    assert re.search(r'data-priority-keyword="true"[\s\S]*?>\s*Milei\s*<', html)
+    assert re.search(r'data-priority-keyword="false"[\s\S]*?>\s*economía\s*<', html)
 
 
 def test_failure_observability_uses_safe_categories_only(caplog):
