@@ -43,6 +43,7 @@ from editor_jefe_ia import (
     select_recommendations,
 )
 from editorial_control import generate_article_with_editorial_control
+from html_sanitizer import sanitize_article_markup
 import publicador
 import publicapress
 
@@ -475,6 +476,17 @@ def parse_contenido_ia(raw):
         except json.JSONDecodeError:
             return None
     return None
+
+
+def contenido_ia_para_panel(contenido_ia):
+    if not contenido_ia:
+        return None
+
+    contenido_panel = dict(contenido_ia)
+    contenido_panel['articulo_html_panel'] = sanitize_article_markup(
+        contenido_ia.get('articulo', '')
+    )
+    return contenido_panel
 
 
 def obtener_reporte_calidad(fuente=None, desde=None, hasta=None):
@@ -1006,7 +1018,9 @@ def cluster_detalle(cluster_id):
         return redirect(url_for('index'))
 
     noticias = obtener_noticias_cluster(cluster_id)
-    contenido_ia = parse_contenido_ia(cluster.get('contenido_ia'))
+    contenido_ia = contenido_ia_para_panel(
+        parse_contenido_ia(cluster.get('contenido_ia'))
+    )
 
     # Evitamos recalcular toda la lista (costoso) para cada detalle.
     score_editorial = cluster.get('score', 0)
