@@ -1,5 +1,7 @@
 # Apply Progress: Editor Jefe IA v2
 
+> Historical note: this file preserves the original apply-phase execution evidence from the implementation slices that built the feature. The primary contract artifacts (`proposal.md`, `design.md`, `tasks.md`, and `specs/editor-jefe-ia/spec.md`) were later rewritten to align with the implemented workflow as a whole, so this progress log should be read as historical delivery evidence rather than the current feature contract.
+
 ## Current boundary
 
 - Authorized work unit: **Slice A — bounded read-only editorial context only**.

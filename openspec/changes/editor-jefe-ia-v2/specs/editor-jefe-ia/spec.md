@@ -2,217 +2,149 @@
 
 ## Purpose
 
-Provide an on-demand, read-only AI recommendation shortlist inside the existing editorial panel while preserving all existing editorial behavior and keeping each result limited to the HTML response returned by its explicit POST.
+Provide an AI-assisted editorial workflow inside the existing panel that can persist accepted recommendations, generate articles from those saved recommendations, require human editorial approval when automated review does not pass cleanly, and render generated article previews safely in the admin UI.
 
 ## Requirements
 
-### Requirement: Existing panel tab and explicit batch initiation
+### Requirement: Explicit recommendation requests with persistent saved results
 
-The existing editorial panel MUST provide an Editor Jefe IA tab using the panel's existing context and MUST start a selection batch only after an explicit action by the human editorial operator.
+The existing editorial panel MUST provide an Editor Jefe IA tab and MUST start recommendation selection only after an explicit action by the human operator. Accepted recommendations MUST be persisted in dedicated storage and MUST be available again on later page loads.
 
-#### Scenario: Operator starts a batch
+#### Scenario: Operator requests recommendations
 
-- GIVEN the operator is viewing the existing editorial panel
-- WHEN the operator opens the Editor Jefe IA tab and explicitly requests a batch
-- THEN the system starts one on-demand selection request
-- AND the system MUST NOT start selection from GET navigation, scheduling, or background execution
-- AND refresh or navigation MUST NOT be relied on to preserve the POST response result
+- GIVEN the operator is viewing the Editor Jefe IA panel
+- WHEN the operator submits a recommendation request
+- THEN the system performs one explicit recommendation run
+- AND GET navigation alone does not trigger recommendation selection
+- AND accepted recommendations are persisted for later retrieval
 
-### Requirement: Pending recent cluster eligibility
+### Requirement: Saved recommendations are excluded from future recommendation runs
 
-A batch MUST consider only pending editorial clusters that have qualifying news published or extracted within the immediately preceding three days. The qualifying timestamp MUST use publication time when present and extraction time as the fallback. Eligible clusters MUST be presented to selection newest first by their most recent qualifying news timestamp.
+The recommendation selector MUST avoid re-selecting clusters that are already persisted as saved recommendations.
 
-#### Scenario: Build the eligible input
+#### Scenario: Persisted recommendation is not reconsidered
 
-- GIVEN clusters contain news with publication and extraction timestamps
-- WHEN the operator requests a batch
-- THEN the selection input contains only pending clusters with at least one qualifying news item in the immediately preceding three days
-- AND a news item's publication timestamp is used when available
-- AND its extraction timestamp is used only when publication time is unavailable
-- AND the eligible input is ordered from newest to oldest
-- AND clusters outside the window or not pending are absent from the input
+- GIVEN a cluster is already saved as an Editor Jefe IA recommendation
+- WHEN the operator requests another recommendation run
+- THEN that cluster is excluded from the candidate set for the new run
 
-#### Scenario: No eligible clusters
+### Requirement: Recommendation selection is processed in batches of five
 
-- GIVEN no pending cluster has qualifying news in the preceding three days
-- WHEN the operator requests a batch
-- THEN the system reports a clear empty state
-- AND no selection result is displayed as a recommendation
-- AND no downstream editorial action occurs
+Recommendation selection MUST split the bounded candidate list into deterministic groups of at most five candidates per AI request.
 
-### Requirement: Existing panel score and keyword context
+#### Scenario: Request more than five candidates
 
-For every eligible cluster, the AI selection context MUST include the cluster's `editorial_score` calculated with exact parity to the existing panel calculation or primitive, and the normalized cluster keywords already associated with that cluster in the panel. This context MUST NOT introduce a new scoring formula or unrelated keyword source.
+- GIVEN the operator requests more than five candidate slots
+- WHEN the system performs recommendation selection
+- THEN the system sends one or more AI requests containing at most five candidates each
+- AND the final accepted selections are combined into one result set for persistence/display
 
-#### Scenario: Preserve editorial score parity
+### Requirement: Saved recommendations support bulk article generation
 
-- GIVEN an eligible cluster has an editorial score shown by the existing panel
-- WHEN the system builds the AI selection context
-- THEN the context includes `editorial_score`
-- AND its value is calculated by reusing the exact existing panel calculation or primitive
-- AND the value matches the score represented by the existing panel for that cluster
+The Editor Jefe IA panel MUST allow bulk article generation from the saved recommendation queue.
 
-#### Scenario: Associate normalized keywords with their cluster
+#### Scenario: Generate from saved recommendations
 
-- GIVEN an eligible cluster has normalized keywords available to the existing panel
-- WHEN the system builds the AI selection context
-- THEN the context includes those normalized keywords for that same cluster
-- AND keywords from another cluster or an unrelated normalization source are not associated with it
+- GIVEN one or more recommendations are saved
+- WHEN the operator starts bulk generation from Editor Jefe IA
+- THEN the system attempts article generation for each saved recommendation whose current cluster state still allows generation
+- AND the system reports generated, skipped, and failed outcomes
 
-### Requirement: Bounded recent-news context
+### Requirement: Editorial control allows at most one regeneration
 
-For every eligible cluster, the AI selection context MUST include no more than the three most recent qualifying news items for that cluster, ordered newest first by effective timestamp. Each item MUST contain its title, source, effective timestamp, and a whitespace-normalized excerpt of at most 600 Unicode characters from existing news text. The effective timestamp MUST use publication time when present and extraction time as its fallback. No fourth item or text beyond the 600-character excerpt bound MAY enter the AI payload.
+Generated articles MUST pass through editorial control with one initial review and at most one regeneration/review retry.
 
-#### Scenario: Order and limit qualifying news
+#### Scenario: First review fails and retry succeeds
 
-- GIVEN an eligible cluster has four or more qualifying news items
-- WHEN the system builds the AI selection context
-- THEN it includes only the three most recent items for that cluster
-- AND those items are ordered newest first by effective timestamp
-- AND no fourth item enters the AI payload
+- GIVEN article generation succeeds
+- AND the first editorial review fails
+- WHEN the system regenerates the article with the review corrections
+- THEN the system performs exactly one retry generation
+- AND exactly one final review of that regenerated article
 
-#### Scenario: Build bounded excerpts
+#### Scenario: Review still fails after retry budget is exhausted
 
-- GIVEN a qualifying news item has existing news text containing arbitrary whitespace and more than 600 Unicode characters
-- WHEN the system builds its AI context
-- THEN the excerpt is whitespace-normalized
-- AND the excerpt contains at most 600 Unicode characters
-- AND no text beyond that bound enters the AI payload
+- GIVEN the first generated article fails editorial review
+- AND the regenerated article also fails review or retry-generation cannot complete cleanly
+- WHEN the retry budget is exhausted
+- THEN the system requires human editorial review instead of retrying again
 
-#### Scenario: Apply timestamp fallback and null handling
+### Requirement: `requiere_revision_editorial` is a real publication gate
 
-- GIVEN a qualifying news item has a publication timestamp
-- WHEN the system builds its AI context
-- THEN its effective timestamp is the publication timestamp
-- GIVEN another qualifying news item has no publication timestamp but has an extraction timestamp
-- WHEN the system builds its AI context
-- THEN its effective timestamp is the extraction timestamp
-- GIVEN title, source, or news text is null
-- WHEN the system builds its AI context
-- THEN the item remains bounded and valid without inventing text or timestamps
-- AND null values do not cause an additional news item or unbounded excerpt to enter the AI payload
+The system MUST use `requiere_revision_editorial` as a real publication gate for generated articles.
 
-### Requirement: Complete approved context in the fixed prompt payload
+#### Scenario: Review-required article cannot be published yet
 
-The fixed, code-owned AI selection prompt MUST receive the approved context for every eligible cluster: `editorial_score`, normalized cluster keywords, and the bounded recent-news items with their title, source, effective timestamp, and excerpt. The prompt payload MUST preserve cluster association and MUST NOT omit or replace this context with a minimal field set. This AI-only context MUST NOT add writing, persistence, mutation, or extra UI controls.
+- GIVEN a cluster is generated
+- AND `requiere_revision_editorial` is true
+- WHEN a publication action is attempted
+- THEN the system blocks publication server-side
+- AND the system instructs the operator to approve editorial review from the cluster detail flow
 
-#### Scenario: Include richer context for every candidate
+### Requirement: Human approval happens from `/cluster/<id>`
 
-- GIVEN the eligible input contains one or more clusters
-- WHEN the system requests AI selection
-- THEN the prompt payload contains the approved score, normalized keywords, and bounded recent-news context for every eligible cluster
-- AND the payload contains no fourth recent-news item or excerpt exceeding 600 Unicode characters
-- AND the response-only lifecycle, result display, and read-only boundaries remain unchanged
+When editorial review is required, a human MUST be able to clear that gate from the cluster detail page before publication.
 
-### Requirement: Positive maximum as a selection ceiling
+#### Scenario: Human approves editorial review
 
-The operator MUST provide a positive whole-number maximum for a batch. The maximum MUST be a ceiling rather than a target; the AI MAY select any number from zero through the lesser of that maximum and the number of eligible clusters, and MUST select only eligible cluster IDs. No additional arbitrary product maximum applies in this first slice.
+- GIVEN a generated cluster requires editorial review
+- WHEN the operator approves the review from `/cluster/<id>`
+- THEN the system clears `requiere_revision_editorial`
+- AND the cluster becomes publishable again if no other publication blocker exists
 
-#### Scenario: Valid bounded request
+### Requirement: Quick publish is available only when review is not required
 
-- GIVEN the operator provides a positive whole-number maximum
-- WHEN the batch is requested with an eligible input
-- THEN the AI may return zero or more recommendations up to the applicable ceiling
-- AND the result contains no cluster ID outside the eligible input
+The Editor Jefe IA panel MUST expose quick publish only for saved recommendations whose cluster is already generated and does not require editorial review.
 
-#### Scenario: Invalid maximum
+#### Scenario: Quick publish is enabled
 
-- GIVEN the operator provides a non-numeric, non-integer, zero, or negative maximum
-- WHEN the operator requests a batch
-- THEN the system rejects the request before AI selection
-- AND the system explains that a positive whole number is required
-- AND no editorial state changes
+- GIVEN a saved recommendation points to a generated cluster
+- AND `requiere_revision_editorial` is false
+- WHEN the operator opens the quick-publish controls
+- THEN the system allows inline photo selection and direct publication
 
-### Requirement: Fixed selection policy
+#### Scenario: Quick publish is hidden behind the review gate
 
-Selection MUST use one fixed, code-owned AI prompt and policy for this first slice. The operator MUST NOT edit or replace that prompt or policy through the panel.
+- GIVEN a saved recommendation points to a generated cluster
+- AND `requiere_revision_editorial` is true
+- WHEN the operator views the item in Editor Jefe IA
+- THEN the quick-publish action is not available there
+- AND the UI directs the operator to approve the review in the cluster detail
 
-#### Scenario: Batch uses the approved policy
+### Requirement: Prompt text and editorial rules come from env-configured files
 
-- GIVEN the operator starts a valid batch
-- WHEN the system requests AI selection
-- THEN the request uses the fixed selection prompt and policy
-- AND no user-provided prompt or policy changes the selection contract
+Prompt text and editorial rules used by the workflow MUST load from files configured through environment variables, and invalid configuration MUST fail closed.
 
-### Requirement: Recommendation presentation
+#### Scenario: Relative configured path resolves from the project root
 
-Each displayed selection MUST include the existing panel context needed to identify and understand the cluster, a concise reason supplied by the AI, and explicit wording that frames the selection as an AI recommendation rather than an editorial decision or approval. A successful result containing zero selections MUST be presented as a valid empty recommendation outcome.
+- GIVEN a prompt or rules env var contains a relative file path
+- WHEN the application loads that configuration
+- THEN the path resolves relative to the project root
 
-#### Scenario: Display a non-empty recommendation
+#### Scenario: Missing or invalid prompt/rules file
 
-- GIVEN a batch completes successfully with one or more selected eligible clusters
-- WHEN the result is shown in the Editor Jefe IA tab
-- THEN each selection includes its cluster identity, useful existing panel context, and a concise AI reason
-- AND the result is explicitly labeled as a recommendation
-- AND selections are shown newest first
+- GIVEN a required prompt or rules file is missing, unreadable, malformed, or invalid
+- WHEN the application loads it
+- THEN the workflow fails closed instead of silently falling back to hidden defaults
 
-#### Scenario: Display a zero-selection recommendation
+### Requirement: Generated article HTML is sanitized for panel rendering
 
-- GIVEN a batch completes successfully with zero selected clusters
-- WHEN the result is shown
-- THEN the system displays a clear empty recommendation outcome
-- AND it does not treat the outcome as a system failure
+Generated article HTML rendered in the admin panel MUST be sanitized before output.
 
-### Requirement: Response-only result lifetime
+#### Scenario: Unsafe markup is removed from the panel preview
 
-The system MUST render a batch outcome only in the HTML response returned by the explicit POST. A GET MUST render the form and empty state without a prior recommendation. The system MUST NOT add authentication, Flask session state, cookie result storage, server cache, browser-storage preservation, PRG redirect, prior-result preservation, PostgreSQL persistence, or any other result history. Refresh behavior MAY prompt browser POST resubmission and is explicitly not guaranteed.
+- GIVEN a generated article contains unsafe HTML markup
+- WHEN the article is rendered in the admin/editorial panel
+- THEN dangerous tags, unsafe protocols, event attributes, comments, and invalid image markup are removed
+- AND allowed editorial formatting remains visible to the operator
 
-#### Scenario: Successful POST response
+### Requirement: Existing editorial control remains human-led
 
-- GIVEN the operator submits a valid explicit POST
-- WHEN retrieval, AI selection, and response validation succeed
-- THEN that same POST response contains the complete recommendation or valid zero-selection state
-- AND no subsequent request is required to display it
+The workflow MUST remain human-led even though AI assists with recommendation and generation.
 
-#### Scenario: Navigate or load the page with GET
+#### Scenario: Automation stops at the approval gate
 
-- GIVEN a recommendation was previously returned
-- WHEN the operator navigates away, navigates back, or requests the tab with GET
-- THEN the page displays the form and empty state
-- AND the previous recommendation is not restored
-
-#### Scenario: Failed POST response
-
-- GIVEN the operator submits an explicit POST
-- WHEN input validation, retrieval, AI selection, or response validation fails
-- THEN that same POST response displays retryable error feedback
-- AND no recommendation or partial result is displayed
-- AND no prior result is restored
-- AND no batch or result is persisted
-
-### Requirement: Fail-closed AI response validation
-
-The system MUST fail closed and display no partial selection when an AI response is malformed, contains duplicate IDs, contains an unknown or ineligible ID, omits a required reason, or exceeds the applicable maximum. A validation failure MUST leave editorial state unchanged and render only retryable error feedback in the POST response.
-
-#### Scenario: Reject an invalid response
-
-- GIVEN the AI returns malformed output, duplicate IDs, unknown or ineligible IDs, a selected item without a reason, or too many selections
-- WHEN the system validates the response
-- THEN the batch is rejected as invalid
-- AND no partial selection or prior result is displayed
-- AND retryable error feedback is rendered in the POST response
-- AND no writer, review, correction, publication, scheduler, background process, or editorial-state mutation is triggered
-
-### Requirement: Advisory read-only boundary
-
-The Editor Jefe IA batch and its result MUST be advisory and read-only. The feature MUST NOT invoke article writing, review, correction, approval, or publication; schedule or run work in the background; or mutate cluster, publication, priority, assignment, or other editorial state. It MUST NOT introduce PostgreSQL persistence or migrations.
-
-#### Scenario: Recommendation has no downstream effect
-
-- GIVEN an operator has requested or displayed a recommendation
-- WHEN the batch completes or the operator views the result
-- THEN no article or editorial workflow is started automatically
-- AND no scheduler or background execution is created
-- AND no editorial data is changed
-- AND no PostgreSQL table, migration, or durable result record is required
-
-### Requirement: Existing panel behavior is preserved
-
-Adding Editor Jefe IA MUST preserve the existing editorial panel, cluster detail, writer, and publication behavior outside this first-slice recommendation flow.
-
-#### Scenario: Existing editorial flows remain unchanged
-
-- GIVEN an operator uses an existing panel tab or editorial flow other than Editor Jefe IA
-- WHEN the operator views clusters, opens details, writes, reviews, corrects, or publishes through those existing flows
-- THEN those flows retain their existing behavior
-- AND the Editor Jefe IA feature does not alter their editorial state or results
+- GIVEN Editor Jefe IA has recommended a cluster and generated an article
+- WHEN automated editorial control still requires review
+- THEN the system does not auto-publish
+- AND a human must explicitly approve the cluster before publication can proceed
