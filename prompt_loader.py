@@ -3,6 +3,16 @@ import os
 from pathlib import Path
 
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_configured_path(configured_path):
+    path = Path(configured_path)
+    if path.is_absolute():
+        return path
+    return PROJECT_ROOT / path
+
+
 def _required_path(env_var_name, env):
     source_env = os.environ if env is None else env
     configured_path = source_env.get(env_var_name)
@@ -10,7 +20,7 @@ def _required_path(env_var_name, env):
         raise RuntimeError(
             f"Missing required environment variable {env_var_name} for prompt/rules file"
         )
-    return Path(configured_path)
+    return _resolve_configured_path(configured_path)
 
 
 def load_prompt_text(env_var_name, logger, env=None):

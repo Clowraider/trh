@@ -41,6 +41,24 @@ def test_load_prompt_text_fails_on_read_error():
     assert "does not exist" in str(excinfo.value)
 
 
+def test_load_prompt_text_resolves_relative_paths_from_project_root(monkeypatch, tmp_path):
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    prompt_file = prompt_dir / "writer.txt"
+    prompt_file.write_text("Prompt override\n", encoding="utf-8")
+
+    monkeypatch.setattr(prompt_loader, "PROJECT_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path / "prompts")
+
+    prompt = prompt_loader.load_prompt_text(
+        "TEST_PROMPT_FILE",
+        logger=logging.getLogger("tests.prompt_loader"),
+        env={"TEST_PROMPT_FILE": "prompts/writer.txt"},
+    )
+
+    assert prompt == "Prompt override\n"
+
+
 def test_load_json_file_returns_validated_contents_when_configured(tmp_path):
     rules_file = tmp_path / "rules.json"
     rules_file.write_text(
@@ -81,6 +99,25 @@ def test_load_json_file_fails_on_invalid_json(tmp_path):
         )
 
     assert "invalid JSON" in str(excinfo.value)
+
+
+def test_load_json_file_resolves_relative_paths_from_project_root(monkeypatch, tmp_path):
+    prompt_dir = tmp_path / "prompts"
+    prompt_dir.mkdir()
+    rules_file = prompt_dir / "rules.json"
+    rules_file.write_text(json.dumps({"ok": True}), encoding="utf-8")
+
+    monkeypatch.setattr(prompt_loader, "PROJECT_ROOT", tmp_path)
+    monkeypatch.chdir(tmp_path / "prompts")
+
+    rules = prompt_loader.load_json_file(
+        "TEST_RULES_FILE",
+        logger=logging.getLogger("tests.prompt_loader"),
+        validator=lambda value: value,
+        env={"TEST_RULES_FILE": "prompts/rules.json"},
+    )
+
+    assert rules == {"ok": True}
 
 
 @pytest.mark.parametrize(
@@ -213,6 +250,33 @@ def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
         assert "FUENTE 1: Fuente Test" in prompt
         assert "CONTENIDO: Texto base..." in prompt
         assert "Seguí esta guía." in prompt
+    finally:
+        if original_value is None:
+            monkeypatch.delenv("ARTICLE_WRITER_USER_PROMPT_FILE", raising=False)
+        else:
+            monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", original_value)
+        importlib.reload(publicador)
+
+
+@pytest.mark.parametrize(
+    ("template_text", "missing_placeholder"),
+    [
+        ("Fuentes:\n$editorial_guidance_block", "sources_block"),
+        ("Fuentes:\n$sources_block", "editorial_guidance_block"),
+    ],
+)
+def test_publicador_fails_when_user_prompt_template_misses_required_placeholders(
+    monkeypatch, tmp_path, template_text, missing_placeholder
+):
+    original_value = os.environ.get("ARTICLE_WRITER_USER_PROMPT_FILE")
+    prompt_file = tmp_path / "article_writer_user_prompt.txt"
+    prompt_file.write_text(template_text, encoding="utf-8")
+    monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", str(prompt_file))
+
+    publicador = importlib.import_module("publicador")
+    try:
+        with pytest.raises(RuntimeError, match=missing_placeholder):
+            importlib.reload(publicador)
     finally:
         if original_value is None:
             monkeypatch.delenv("ARTICLE_WRITER_USER_PROMPT_FILE", raising=False)

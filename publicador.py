@@ -67,10 +67,44 @@ ARTICLE_WRITER_SYSTEM_PROMPT = load_prompt_text(
     logger,
 )
 
-ARTICLE_WRITER_USER_PROMPT_TEMPLATE = load_prompt_text(
-    'ARTICLE_WRITER_USER_PROMPT_FILE',
-    logger,
-)
+REQUIRED_ARTICLE_WRITER_TEMPLATE_PLACEHOLDERS = {
+    'sources_block',
+    'editorial_guidance_block',
+}
+
+
+def _extract_template_placeholders(template_text):
+    template = Template(template_text)
+    placeholders = set()
+
+    for match in template.pattern.finditer(template.template):
+        name = match.group('named') or match.group('braced')
+        if name:
+            placeholders.add(name)
+
+    return placeholders
+
+
+def _load_article_writer_user_prompt_template():
+    template_text = load_prompt_text(
+        'ARTICLE_WRITER_USER_PROMPT_FILE',
+        logger,
+    )
+    placeholders = _extract_template_placeholders(template_text)
+    missing_placeholders = sorted(
+        REQUIRED_ARTICLE_WRITER_TEMPLATE_PLACEHOLDERS - placeholders
+    )
+
+    if missing_placeholders:
+        raise RuntimeError(
+            'ARTICLE_WRITER_USER_PROMPT_FILE is missing required placeholders: '
+            + ', '.join(f'${name}' for name in missing_placeholders)
+        )
+
+    return template_text
+
+
+ARTICLE_WRITER_USER_PROMPT_TEMPLATE = _load_article_writer_user_prompt_template()
 
 
 # =============================================================================
