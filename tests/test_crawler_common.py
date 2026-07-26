@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import sys
 import types
 import unittest
@@ -23,6 +24,20 @@ sys.modules.setdefault("psycopg2.extras", psycopg2_extras_stub)
 dotenv_stub = types.ModuleType("dotenv")
 setattr(dotenv_stub, "load_dotenv", lambda *args, **kwargs: None)
 sys.modules.setdefault("dotenv", dotenv_stub)
+
+requests_stub = types.ModuleType("requests")
+setattr(requests_stub, "Session", object)
+sys.modules.setdefault("requests", requests_stub)
+
+bs4_stub = types.ModuleType("bs4")
+
+
+class _BeautifulSoupStub:
+    pass
+
+
+setattr(bs4_stub, "BeautifulSoup", _BeautifulSoupStub)
+sys.modules.setdefault("bs4", bs4_stub)
 
 
 COMMON_PATH = Path(__file__).resolve().parent.parent / "crawler" / "common.py"
@@ -70,7 +85,101 @@ class DummyLogger:
         pass
 
 
+class FakeNode:
+    def __init__(self):
+        self.removed = False
+
+    def decompose(self):
+        self.removed = True
+
+
+class FakeContainer:
+    def __init__(self, matches):
+        self.matches = matches
+
+    def select(self, selector):
+        return self.matches.get(selector, [])
+
+
 class TestCrawlerCommon(unittest.TestCase):
+    def test_build_article_removable_selectors_keeps_defaults_and_deduplicates(self):
+        selectors = common.build_article_removable_selectors("aside", "script", ".promo")
+
+        self.assertEqual(
+            selectors,
+            ("script", "style", "iframe", "aside", ".promo"),
+        )
+
+    def test_build_low_value_paragraph_phrases_normalizes_extras_only(self):
+        phrases = common.build_low_value_paragraph_phrases("Facebook", "facebook", "  Instagram  ")
+
+        self.assertEqual(
+            phrases,
+            ("facebook", "instagram"),
+        )
+
+    def test_matches_low_value_paragraph_phrase_supports_prefix_mode_without_shared_defaults(self):
+        self.assertTrue(
+            common.matches_low_value_paragraph_phrase(
+                "Leé también: otra nota",
+                "leé también",
+                require_prefix=True,
+            )
+        )
+        self.assertFalse(
+            common.matches_low_value_paragraph_phrase(
+                "Te puede interesar conocer cómo impacta la sequía en la producción local.",
+                "te puede interesar",
+                require_prefix=True,
+            )
+        )
+
+    def test_remove_selected_content_removes_default_and_extra_matches(self):
+        script = FakeNode()
+        iframe = FakeNode()
+        aside = FakeNode()
+        container = FakeContainer({
+            "script": [script],
+            "iframe": [iframe],
+            "aside": [aside],
+        })
+
+        common.remove_selected_content(container, extra_selectors=("aside",))
+
+        self.assertTrue(script.removed)
+        self.assertTrue(iframe.removed)
+        self.assertTrue(aside.removed)
+
+    def test_should_skip_paragraph_text_uses_length_and_explicit_phrase_configuration(self):
+        self.assertTrue(common.should_skip_paragraph_text("short text", min_length=20))
+        self.assertTrue(
+            common.should_skip_paragraph_text(
+                "Leé también: otra nota",
+                min_length=5,
+                leading_phrases=("leé también",),
+            )
+        )
+        self.assertTrue(
+            common.should_skip_paragraph_text(
+                "Follow us on Facebook for more",
+                min_length=5,
+                extra_phrases=("facebook",),
+            )
+        )
+        self.assertFalse(
+            common.should_skip_paragraph_text(
+                "This is a valid paragraph with enough useful text.",
+                min_length=20,
+            )
+        )
+        self.assertFalse(
+            common.should_skip_paragraph_text(
+                "Te puede interesar conocer cómo impacta la sequía en la producción local.",
+                min_length=20,
+                leading_phrases=("te puede interesar",),
+            )
+        )
+
     def test_normalize_text_for_storage_strips_tags_and_empty_lines(self):
         raw = "  <p>Hello   <strong>world</strong></p>\n\n<div>Line   two</div><br>  <em>Line three</em>  "
 
@@ -142,7 +251,7 @@ class TestCrawlerCommon(unittest.TestCase):
         source = "Test Source"
         calls = {"processed": 0, "marked": 0}
 
-        def fake_process_page(url, importancia_links, extraer_noticia):
+        def fake_process_page(url, importancia_links, extraer_noticia, extraer_links=True):
             if not extraer_noticia:
                 return True, False
             calls["processed"] += 1
@@ -177,7 +286,7 @@ class TestCrawlerCommon(unittest.TestCase):
     def test_run_crawler_template_prioritizes_alta_then_baja(self):
         seen = []
 
-        def fake_process_page(url, importancia_links, extraer_noticia):
+        def fake_process_page(url, importancia_links, extraer_noticia, extraer_links=True):
             if extraer_noticia:
                 seen.append(url)
             return True, bool(extraer_noticia)
@@ -210,6 +319,59 @@ class TestCrawlerCommon(unittest.TestCase):
             )
 
         self.assertEqual(seen, ["alta-1", "alta-2", "baja-1"])
+
+    def test_run_crawler_template_only_discovers_links_from_base_url(self):
+        process_calls = []
+
+        def fake_process_page(url, importancia_links, extraer_noticia, extraer_links=True):
+            process_calls.append(
+                {
+                    "url": url,
+                    "importancia_links": importancia_links,
+                    "extraer_noticia": extraer_noticia,
+                    "extraer_links": extraer_links,
+                }
+            )
+            return True, bool(extraer_noticia)
+
+        pending_batches = [[(1, "https://site.com/article-1")], []]
+
+        def fake_pending(_fuente, _max_tanda, _faltan):
+            return pending_batches.pop(0)
+
+        with patch.object(common, "_obtener_pendientes_priorizados", side_effect=fake_pending), \
+             patch.object(common, "_marcar_url_procesada", return_value=None), \
+             patch.object(common.time, "sleep", return_value=None), \
+             patch.object(common.random, "uniform", return_value=0):
+            common.run_crawler_template(
+                fuente="Test",
+                base_url="https://site.com",
+                process_page=fake_process_page,
+                max_urls_por_tanda=30,
+                max_noticias_por_ejecucion=10,
+                delay_base=0,
+                delay_random_min=0,
+                delay_random_max=0,
+                logger=DummyLogger(),
+            )
+
+        self.assertEqual(
+            process_calls,
+            [
+                {
+                    "url": "https://site.com",
+                    "importancia_links": "alta",
+                    "extraer_noticia": False,
+                    "extraer_links": True,
+                },
+                {
+                    "url": "https://site.com/article-1",
+                    "importancia_links": "baja",
+                    "extraer_noticia": True,
+                    "extraer_links": False,
+                },
+            ],
+        )
 
     def test_guardar_noticia_normalizes_fields_before_insert_for_all_crawlers(self):
         crawler_files = [
@@ -253,6 +415,54 @@ class TestCrawlerCommon(unittest.TestCase):
                 self.assertEqual(insert_params[5], expected_text)
                 self.assertEqual(insert_params[6], "https://site.com/image.jpg?foo=1#frag")
                 self.assertEqual(insert_params[7], datetime(2026, 5, 29, 12, 30))
+
+    def test_shared_runner_crawlers_accept_extraer_links_kwarg(self):
+        crawler_files = [
+            "elliberal_crawler.py",
+            "nuevodiario_crawler.py",
+            "panorama_crawler.py",
+            "sursantiago_crawler.py",
+            "termasdigital_crawler.py",
+        ]
+
+        for crawler_file in crawler_files:
+            with self.subTest(crawler_file=crawler_file):
+                module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
+                spec = importlib.util.spec_from_file_location(crawler_file.replace(".py", ""), module_path)
+                assert spec is not None and spec.loader is not None
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                signature = inspect.signature(module.procesar_pagina)
+
+                self.assertIn("extraer_links", signature.parameters)
+                self.assertTrue(signature.parameters["extraer_links"].default)
+
+    def test_shared_runner_crawlers_keep_their_execution_caps(self):
+        crawler_expectations = {
+            "elliberal_crawler.py": 100,
+            "nuevodiario_crawler.py": 100,
+            "panorama_crawler.py": 100,
+            "sursantiago_crawler.py": 50,
+            "termasdigital_crawler.py": 100,
+        }
+
+        for crawler_file, expected_cap in crawler_expectations.items():
+            with self.subTest(crawler_file=crawler_file):
+                module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
+                spec = importlib.util.spec_from_file_location(crawler_file.replace(".py", ""), module_path)
+                assert spec is not None and spec.loader is not None
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                with patch.object(module, "run_crawler_template") as runner_mock:
+                    module.main()
+
+                self.assertEqual(module.MAX_NOTICIAS_POR_EJECUCION, expected_cap)
+                self.assertEqual(
+                    runner_mock.call_args.kwargs["max_noticias_por_ejecucion"],
+                    expected_cap,
+                )
 
 
 if __name__ == "__main__":

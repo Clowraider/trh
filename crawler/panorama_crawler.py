@@ -39,7 +39,7 @@ EXCLUDE_PATHS = [
 ]
 
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 100
+MAX_NOTICIAS_POR_EJECUCION = 10
 DELAY = 2.8
 MAX_RETRIES = 3
 
@@ -279,7 +279,7 @@ def guardar_noticia(url, titulo, fecha_pub, texto, imagen):
         conn.close()
 
 
-def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
+def procesar_pagina(url, importancia_links="baja", extraer_noticia=True, extraer_links=True):
 
     session = requests.Session()
     response = None
@@ -318,17 +318,18 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
 
     enlaces_guardados = 0
 
-    for a in soup.find_all('a', href=True):
+    if extraer_links:
+        for a in soup.find_all('a', href=True):
 
-        full_url = clean_url(urljoin(url, a['href']))
+            full_url = clean_url(urljoin(url, a['href']))
 
-        if DOMAIN in full_url and not should_exclude(full_url):
+            if DOMAIN in full_url and not should_exclude(full_url):
 
-            if save_url(full_url, importancia_links):
-                enlaces_guardados += 1
+                if save_url(full_url, importancia_links):
+                    enlaces_guardados += 1
 
-                if '/noticia/' in full_url:
-                    logger.debug(f"   → Artículo guardado: {full_url}")
+                    if '/noticia/' in full_url:
+                        logger.debug(f"   → Artículo guardado: {full_url}")
 
     logger.info(f"🔗 Enlaces nuevos/actualizados en esta página: {enlaces_guardados}")
 

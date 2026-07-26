@@ -9,6 +9,8 @@ from datetime import datetime, timedelta
 import logging
 
 from common import (
+    remove_selected_content,
+    should_skip_paragraph_text,
     build_random_headers,
     build_quality_flags,
     get_connection,
@@ -32,7 +34,7 @@ EXCLUDE_PATHS = [
 ]
 
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 100
+MAX_NOTICIAS_POR_EJECUCION = 10
 DELAY = 2.8
 MAX_RETRIES = 3
 def clean_url(url):
@@ -145,22 +147,25 @@ def extraer_texto_articulo(content):
     if not content:
         return ""
 
-    basura_selectores = [
-        'script', 'style', 'iframe', '.heateor_ffc_facebook_comments',
-        '.sharedaddy', '.jp-relatedposts', '.fb-comments', '#fb-root'
-    ]
-
-    for selector in basura_selectores:
-        for elem in content.select(selector):
-            elem.decompose()
+    remove_selected_content(
+        content,
+        extra_selectors=(
+            '.heateor_ffc_facebook_comments',
+            '.sharedaddy',
+            '.jp-relatedposts',
+            '.fb-comments',
+            '#fb-root',
+        ),
+    )
 
     parrafos_limpios = []
     for p in content.find_all('p'):
         texto = p.get_text(" ", strip=True)
-        if len(texto) < 30:
-            continue
-        texto_lower = texto.lower()
-        if 'facebook' in texto_lower or 'twitter' in texto_lower or 'instagram' in texto_lower:
+        if should_skip_paragraph_text(
+            texto,
+            min_length=30,
+            extra_phrases=('facebook', 'twitter', 'instagram'),
+        ):
             continue
         parrafos_limpios.append(texto)
 
@@ -241,7 +246,7 @@ def guardar_noticia(url, titulo, fecha_pub, texto, imagen):
         conn.close()
 
 
-def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
+def procesar_pagina(url, importancia_links="baja", extraer_noticia=True, extraer_links=True):
     logger.info(f"📄 Procesando: {url}")
 
     session = requests.Session()
@@ -264,14 +269,15 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
     soup = BeautifulSoup(response.text, 'html.parser')
 
     enlaces_guardados = 0
-    for a in soup.find_all('a', href=True):
-        href = a.get('href')
-        if not isinstance(href, str):
-            continue
-        full_url = clean_url(urljoin(url, href))
-        if is_valid_article_url(full_url):
-            if save_url(full_url, importancia_links):
-                enlaces_guardados += 1
+    if extraer_links:
+        for a in soup.find_all('a', href=True):
+            href = a.get('href')
+            if not isinstance(href, str):
+                continue
+            full_url = clean_url(urljoin(url, href))
+            if is_valid_article_url(full_url):
+                if save_url(full_url, importancia_links):
+                    enlaces_guardados += 1
 
     logger.info(f"🔗 Enlaces nuevos/actualizados: {enlaces_guardados}")
 

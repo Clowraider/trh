@@ -9,6 +9,8 @@ from datetime import datetime
 import logging
 
 from common import (
+    remove_selected_content,
+    should_skip_paragraph_text,
     build_random_headers,
     build_quality_flags,
     get_connection,
@@ -55,7 +57,7 @@ EXCLUDE_EXTENSIONS = (
 )
 
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 100
+MAX_NOTICIAS_POR_EJECUCION = 10
 DELAY = 2.8
 MAX_RETRIES = 3
 
@@ -351,7 +353,7 @@ def guardar_noticia(url, titulo, fecha_pub, texto, imagen):
         conn.close()
 
 
-def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
+def procesar_pagina(url, importancia_links="baja", extraer_noticia=True, extraer_links=True):
 
     session = requests.Session()
     response = None
@@ -399,28 +401,29 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
 
     enlaces_guardados = 0
 
-    for a in soup.find_all('a', href=True):
+    if extraer_links:
+        for a in soup.find_all('a', href=True):
 
-        full_url = clean_url(
-            urljoin(url, a['href'])
-        )
+            full_url = clean_url(
+                urljoin(url, a['href'])
+            )
 
-        # =================================================
-        # SOLO URLs DEL SITIO
-        # =================================================
+            # =================================================
+            # SOLO URLs DEL SITIO
+            # =================================================
 
-        if not full_url.startswith(BASE_URL):
-            continue
+            if not full_url.startswith(BASE_URL):
+                continue
 
-        if not should_exclude(full_url):
+            if not should_exclude(full_url):
 
-            if save_url(full_url, importancia_links):
+                if save_url(full_url, importancia_links):
 
-                enlaces_guardados += 1
+                    enlaces_guardados += 1
 
-                logger.debug(
-                    f"   → URL guardada: {full_url}"
-                )
+                    logger.debug(
+                        f"   → URL guardada: {full_url}"
+                    )
 
     logger.info(
         f"🔗 Enlaces nuevos/actualizados en esta página: "
@@ -466,14 +469,10 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
             # LIMPIEZA BÁSICA
             # =============================================
 
-            for tag in section.find_all([
-                'script',
-                'style',
-                'iframe',
-                'button',
-                'aside'
-            ]):
-                tag.decompose()
+            remove_selected_content(
+                section,
+                extra_selectors=('button', 'aside'),
+            )
 
             parrafos = []
 
@@ -484,27 +483,18 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
                     strip=True
                 )
 
-                texto_lower = texto_p.lower()
-
-                # =========================================
-                # OMITIR BLOQUES BASURA
-                # =========================================
-
-                patrones_basura = [
-                    'te puede interesar:',
-                    'lee también:',
-                    'leé también:'
-                ]
-
-                if any(
-                    patron in texto_lower
-                    for patron in patrones_basura
+                if should_skip_paragraph_text(
+                    texto_p,
+                    min_length=40,
+                    extra_phrases=(
+                        'te puede interesar:',
+                        'lee también:',
+                        'leé también:',
+                    ),
                 ):
                     continue
 
-                if len(texto_p) > 40:
-
-                    parrafos.append(str(p))
+                parrafos.append(str(p))
 
             texto_completo = html_a_texto(
                 ''.join(parrafos)

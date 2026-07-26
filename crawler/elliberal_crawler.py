@@ -9,6 +9,8 @@ from datetime import datetime
 import logging
 
 from common import (
+    remove_selected_content,
+    should_skip_paragraph_text,
     build_random_headers,
     build_quality_flags,
     get_connection,
@@ -39,7 +41,7 @@ EXCLUDE_PATHS = [
 ]
 
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 100
+MAX_NOTICIAS_POR_EJECUCION = 10
 DELAY = 2.5
 
 def clean_url(url):
@@ -181,23 +183,17 @@ def extraer_texto_articulo(content):
     if not content:
         return ""
 
-    # eliminar basura
-    basura_selectores = [
-        'script',
-        'style',
-        'iframe',
+    remove_selected_content(
+        content,
+        extra_selectors=(
         '.notas-texto-contenedor',
         '.relacionada-en-texto',
         '[data-type="adContainer"]',
         '.adsbygoogle',
         '.external',
         '.whtsppgrp'
-    ]
-
-    for selector in basura_selectores:
-
-        for elem in content.select(selector):
-            elem.decompose()
+        ),
+    )
 
     parrafos_limpios = []
 
@@ -205,25 +201,16 @@ def extraer_texto_articulo(content):
 
         texto = p.get_text(" ", strip=True)
 
-        if not texto:
-            continue
-
-        if len(texto) < 40:
-            continue
-
-        texto_lower = texto.lower()
-
-        # filtros basura
-        if 'también te puede interesar' in texto_lower:
-            continue
-
-        if 'hacé click aquí' in texto_lower:
-            continue
-
-        if 'canal de whatsapp' in texto_lower:
-            continue
-
-        if 'publicidad' in texto_lower:
+        if should_skip_paragraph_text(
+            texto,
+            min_length=40,
+            extra_phrases=(
+                'también te puede interesar',
+                'hacé click aquí',
+                'canal de whatsapp',
+                'publicidad',
+            ),
+        ):
             continue
 
         parrafos_limpios.append(texto)
@@ -345,7 +332,7 @@ def guardar_noticia(url, titulo, fecha_pub, texto, imagen):
         conn.close()
 
 
-def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
+def procesar_pagina(url, importancia_links="baja", extraer_noticia=True, extraer_links=True):
 
     logger.info(f"📄 Procesando: {url}")
 
@@ -367,14 +354,15 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
 
     enlaces_guardados = 0
 
-    for a in soup.find_all('a', href=True):
+    if extraer_links:
+        for a in soup.find_all('a', href=True):
 
-        full_url = clean_url(urljoin(url, a['href']))
+            full_url = clean_url(urljoin(url, a['href']))
 
-        if is_valid_article_url(full_url):
+            if is_valid_article_url(full_url):
 
-            if save_url(full_url, importancia_links):
-                enlaces_guardados += 1
+                if save_url(full_url, importancia_links):
+                    enlaces_guardados += 1
 
     logger.info(f"🔗 Links nuevos/actualizados: {enlaces_guardados}")
 

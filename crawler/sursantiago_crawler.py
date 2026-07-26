@@ -9,9 +9,11 @@ from datetime import datetime
 import logging
 
 from common import (
+    build_low_value_paragraph_phrases,
     build_random_headers,
     build_quality_flags,
     get_connection,
+    matches_low_value_paragraph_phrase,
     normalize_noticia_fields_for_storage,
     normalize_url_for_storage,
     run_crawler_template,
@@ -30,7 +32,7 @@ EXCLUDE_PATHS = [
     '/audios', '/galerias', '/extras', '/widget', '/api/'
 ]
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 50
+MAX_NOTICIAS_POR_EJECUCION = 10
 DELAY = 2.8
 MAX_RETRIES = 3
 def clean_url(url):
@@ -225,18 +227,31 @@ def extraer_contenido_sursantiago(soup):
             break
 
         texto = elem.get_text(" ", strip=True)
-        texto_lower = texto.lower()
-
         if len(texto) < 30:
             continue
 
-        patrones_corte = [
-            'más noticias', 'publica aquí', 'te puede interesar',
-            'lee también', 'leé también', 'facebook', 'twitter',
-            'widget', 'compartir', 'siguientes notas'
-        ]
+        patrones_corte_prefix = build_low_value_paragraph_phrases(
+            'te puede interesar',
+            'lee también',
+            'leé también',
+        )
+        patrones_corte_substring = build_low_value_paragraph_phrases(
+            'más noticias',
+            'publica aquí',
+            'facebook',
+            'twitter',
+            'widget',
+            'compartir',
+            'siguientes notas',
+        )
 
-        if any(p in texto_lower for p in patrones_corte):
+        if any(
+            matches_low_value_paragraph_phrase(texto, p, require_prefix=True)
+            for p in patrones_corte_prefix
+        ) or any(
+            matches_low_value_paragraph_phrase(texto, p)
+            for p in patrones_corte_substring
+        ):
             cortar_en = True
             continue
 
@@ -274,7 +289,7 @@ def extraer_imagen_sursantiago(soup):
     return None
 
 
-def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
+def procesar_pagina(url, importancia_links="baja", extraer_noticia=True, extraer_links=True):
     session = requests.Session()
     response = None
 
@@ -297,14 +312,15 @@ def procesar_pagina(url, importancia_links="baja", extraer_noticia=True):
     logger.info(f"📄 Procesando: {url} | Título: {soup.title.string[:80] if soup.title else 'Sin título'}")
 
     enlaces_guardados = 0
-    for a in soup.find_all('a', href=True):
-        full_url = clean_url(urljoin(url, a['href']))
-        if not full_url.startswith(BASE_URL):
-            continue
-        if DOMAIN in full_url and not should_exclude(full_url):
-            if save_url(full_url, importancia_links):
-                enlaces_guardados += 1
-                logger.debug(f"   → URL guardada: {full_url}")
+    if extraer_links:
+        for a in soup.find_all('a', href=True):
+            full_url = clean_url(urljoin(url, a['href']))
+            if not full_url.startswith(BASE_URL):
+                continue
+            if DOMAIN in full_url and not should_exclude(full_url):
+                if save_url(full_url, importancia_links):
+                    enlaces_guardados += 1
+                    logger.debug(f"   → URL guardada: {full_url}")
 
     logger.info(f"🔗 Enlaces nuevos/actualizados en esta página: {enlaces_guardados}")
 

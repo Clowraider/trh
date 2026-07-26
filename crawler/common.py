@@ -5,7 +5,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 import psycopg2
@@ -23,6 +23,92 @@ USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:138.0) Gecko/20100101 Firefox/138.0",
 ]
+
+DEFAULT_ARTICLE_REMOVABLE_SELECTORS = (
+    "script",
+    "style",
+    "iframe",
+)
+
+PROMO_PREFIX_PUNCTUATION = (":", ";", ",", ".", "!", "?", "¡", "¿", "-", "—")
+
+
+def _merge_unique_values(values: Iterable[str]) -> tuple[str, ...]:
+    merged: list[str] = []
+
+    for value in values:
+        normalized = value.strip()
+        if normalized and normalized not in merged:
+            merged.append(normalized)
+
+    return tuple(merged)
+
+
+def build_article_removable_selectors(*extra_selectors: str) -> tuple[str, ...]:
+    return _merge_unique_values((*DEFAULT_ARTICLE_REMOVABLE_SELECTORS, *extra_selectors))
+
+
+def build_low_value_paragraph_phrases(*extra_phrases: str) -> tuple[str, ...]:
+    return _merge_unique_values(phrase.lower() for phrase in extra_phrases)
+
+
+def matches_low_value_paragraph_phrase(
+    text: str | None,
+    phrase: str,
+    *,
+    require_prefix: bool = False,
+) -> bool:
+    collapsed = " ".join((text or "").split())
+    normalized_phrase = phrase.strip().lower()
+    if not collapsed or not normalized_phrase:
+        return False
+
+    text_lower = collapsed.lower()
+
+    if not require_prefix:
+        return normalized_phrase in text_lower
+
+    if not text_lower.startswith(normalized_phrase):
+        return False
+
+    suffix = text_lower[len(normalized_phrase):].lstrip()
+    return not suffix or suffix.startswith(PROMO_PREFIX_PUNCTUATION)
+
+
+def remove_selected_content(container, *, extra_selectors: Iterable[str] = ()) -> None:
+    if container is None:
+        return
+
+    for selector in build_article_removable_selectors(*extra_selectors):
+        for elem in container.select(selector):
+            elem.decompose()
+
+
+def should_skip_paragraph_text(
+    text: str | None,
+    *,
+    min_length: int = 0,
+    extra_phrases: Iterable[str] = (),
+    leading_phrases: Iterable[str] = (),
+) -> bool:
+    collapsed = " ".join((text or "").split())
+    if not collapsed:
+        return True
+
+    if len(collapsed) < min_length:
+        return True
+
+    normalized_leading_phrases = set(build_low_value_paragraph_phrases(*leading_phrases))
+    phrases = build_low_value_paragraph_phrases(*extra_phrases, *leading_phrases)
+
+    return any(
+        matches_low_value_paragraph_phrase(
+            collapsed,
+            phrase,
+            require_prefix=phrase in normalized_leading_phrases,
+        )
+        for phrase in phrases
+    )
 
 
 def get_connection():
@@ -209,7 +295,12 @@ def run_crawler_template(
 
     try:
         logger.info("🏠 Procesando BASE_URL primero")
-        process_page(base_url, importancia_links="alta", extraer_noticia=False)
+        process_page(
+            base_url,
+            importancia_links="alta",
+            extraer_noticia=False,
+            extraer_links=True,
+        )
     except Exception as e:
         logger.error(f"❌ Error procesando BASE_URL: {e}")
 
@@ -231,6 +322,7 @@ def run_crawler_template(
                     url,
                     importancia_links="baja",
                     extraer_noticia=True,
+                    extraer_links=False,
                 )
             except Exception as e:
                 logger.error(f"❌ Error procesando {url}: {e}")
