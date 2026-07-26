@@ -30,10 +30,15 @@ class DummyLogger:
 
 
 class TestCrawlerCommon(unittest.TestCase):
-    def test_normalize_url_for_storage_removes_tracking(self):
+    def test_normalize_url_for_storage_removes_query_and_fragment(self):
         url = "https://site.com/nota/123?utm_source=x&fbclid=abc&id=99#fragment"
         normalized = common.normalize_url_for_storage(url)
-        self.assertEqual(normalized, "https://site.com/nota/123?id=99")
+        self.assertEqual(normalized, "https://site.com/nota/123")
+
+    def test_normalize_url_for_storage_removes_fragment_without_query(self):
+        url = "https://site.com/nota/123/#fragment"
+        normalized = common.normalize_url_for_storage(url)
+        self.assertEqual(normalized, "https://site.com/nota/123")
 
     def test_build_quality_flags_has_expected_shape(self):
         flags = common.build_quality_flags(

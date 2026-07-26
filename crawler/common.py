@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit
 
 import psycopg2
 from dotenv import load_dotenv
@@ -29,25 +29,7 @@ def normalize_url_for_storage(url: str) -> str:
         return url
 
     parsed = urlsplit(url.strip())
-    tracking_prefixes = (
-        "utm_",
-        "fbclid",
-        "gclid",
-        "mc_cid",
-        "mc_eid",
-        "_hs",
-        "vero_",
-    )
-
-    clean_pairs = []
-    for k, v in parse_qsl(parsed.query, keep_blank_values=True):
-        lk = k.lower()
-        if lk.startswith(tracking_prefixes):
-            continue
-        clean_pairs.append((k, v))
-
-    clean_query = urlencode(clean_pairs, doseq=True)
-    normalized = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), clean_query, ""))
+    normalized = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
     return normalized
 
 
