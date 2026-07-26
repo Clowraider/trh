@@ -219,6 +219,45 @@ def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations
     return enriched
 
 
+def _enriquecer_items_con_keywords_panel(
+    items,
+    priority_keywords_rows,
+    keywords_por_cluster=None,
+    source_field='keywords',
+):
+    raw_keywords_por_cluster = {}
+
+    for item in items:
+        cluster_id = item.get('cluster_id')
+        if cluster_id is None:
+            continue
+
+        keywords = None
+        if keywords_por_cluster and cluster_id in keywords_por_cluster:
+            keywords = keywords_por_cluster.get(cluster_id)
+        elif source_field:
+            keywords = item.get(source_field)
+
+        if keywords:
+            raw_keywords_por_cluster[cluster_id] = keywords
+
+    highlighted_keywords = build_cluster_keywords_for_panel(
+        raw_keywords_por_cluster,
+        priority_keywords_rows,
+    )
+
+    enriched = []
+    for item in items:
+        enriched_item = dict(item)
+        enriched_item['cluster_keywords'] = highlighted_keywords.get(
+            item.get('cluster_id'),
+            [],
+        )
+        enriched.append(enriched_item)
+
+    return enriched
+
+
 # =============================================================================
 # HELPERS DE BASE DE DATOS
 # =============================================================================
@@ -686,6 +725,7 @@ def index():
 def editor_jefe_ia():
     state, selections, maximum, minimum_editorial_score = "idle", [], "", "50"
     saved_recommendations = []
+    priority_keywords_rows = []
     connection_factory = app.config.get(
         "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
     )
@@ -744,9 +784,43 @@ def editor_jefe_ia():
     except Exception:
         record_context_failure()
         state, selections, saved_recommendations = "error", [], []
+
+    try:
+        priority_keywords_rows = listar_keywords_prioridad_activas()
+    except Exception:
+        record_context_failure()
+
+    selections = _enriquecer_items_con_keywords_panel(
+        selections,
+        priority_keywords_rows,
+    )
+
     saved_recommendations = _enriquecer_recomendaciones_guardadas_para_publicacion(
         saved_recommendations
     )
+
+    saved_keywords_por_cluster = {}
+    saved_cluster_ids = [item.get('cluster_id') for item in saved_recommendations if item.get('cluster_id') is not None]
+    if saved_cluster_ids:
+        conn = None
+        try:
+            conn = connection_factory()
+            saved_keywords_por_cluster = obtener_keywords_por_clusters_ids(
+                conn,
+                saved_cluster_ids,
+            )
+        except Exception:
+            record_context_failure()
+        finally:
+            if conn is not None:
+                conn.close()
+
+    saved_recommendations = _enriquecer_items_con_keywords_panel(
+        saved_recommendations,
+        priority_keywords_rows,
+        keywords_por_cluster=saved_keywords_por_cluster,
+    )
+
     response = make_response(render_template(
         "panel_editor_jefe_ia.html", state=state,
         selections=selections, maximum=maximum,
@@ -790,6 +864,13 @@ def panel_keywords_prioridad():
         tipos_permitidos=TIPOS_KEYWORD_PERMITIDOS,
         ahora=datetime.now()
     )
+
+
+def _redirect_keyword_priority_return_target():
+    return_to = (request.form.get('return_to') or request.args.get('return_to') or '').strip()
+    if return_to == 'editor_jefe_ia':
+        return redirect(url_for('editor_jefe_ia'))
+    return redirect(url_for('index'))
 
 
 @app.route("/keywords-prioridad/crear", methods=["POST"])
@@ -981,14 +1062,14 @@ def upsert_keyword_prioridad():
         puntos = int(request.form.get('puntos', '0'))
     except ValueError:
         flash("Puntaje inválido", "warning")
-        return redirect(url_for('index'))
+        return _redirect_keyword_priority_return_target()
 
     if not keyword:
         flash("La keyword no puede estar vacía", "warning")
-        return redirect(url_for('index'))
+        return _redirect_keyword_priority_return_target()
     if tipo == '__invalid__':
         flash("Tipo inválido. Usá: keyword, persona, lugar u organizacion", "warning")
-        return redirect(url_for('index'))
+        return _redirect_keyword_priority_return_target()
 
     conn = get_connection()
     try:
@@ -1034,7 +1115,7 @@ def upsert_keyword_prioridad():
     finally:
         conn.close()
 
-    return redirect(url_for('index'))
+    return _redirect_keyword_priority_return_target()
 
 
 @app.route("/cluster/<int:cluster_id>")

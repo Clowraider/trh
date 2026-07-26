@@ -234,7 +234,7 @@ def test_openrouter_missing_choice_fails_as_generic_feature_error():
 def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
     import app as panel
     calls = []
-    candidates = [candidate(editorial_score=80)]
+    candidates = [{**candidate(editorial_score=80), "keywords": ["economía", "Otra"]}]
     saved = []
 
     def builder(factory, keyword_loader):
@@ -251,6 +251,11 @@ def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
             return {"selections": [{"cluster_id": 1, "reason": "Relevant"}]}
 
     factory = object()
+    monkeypatch.setattr(
+        panel,
+        "listar_keywords_prioridad_activas",
+        lambda: [{"keyword": " ECONOMÍA ", "activo": True}],
+    )
     configure_panel(panel, EDITOR_JEFE_CONNECTION_FACTORY=factory,
                     EDITOR_JEFE_CONTEXT_BUILDER=builder,
                     EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
@@ -274,6 +279,11 @@ def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
     assert b"return_to" in response.data
     assert b"/descartar/1" in response.data
     assert b"Propuestas guardadas" in response.data
+    html = response.get_data(as_text=True)
+    assert html.count('data-priority-keyword="true"') == 2
+    assert html.count('data-priority-keyword="false"') == 2
+    assert re.search(r'Nuevas recomendaciones[\s\S]*data-priority-keyword="true"[\s\S]*>\s*economía\s*<', html)
+    assert re.search(r'Propuestas guardadas[\s\S]*data-priority-keyword="false"[\s\S]*>\s*Otra\s*<', html)
     assert "Location" not in response.headers
     assert response.headers.getlist("Set-Cookie") == []
     followup_get = client.get("/editor-jefe-ia")
@@ -1017,6 +1027,98 @@ def test_index_highlights_existing_priority_keywords_in_cluster_list(monkeypatch
     assert 'data-priority-keyword="true"' in html
     assert re.search(r'data-priority-keyword="true"[\s\S]*?>\s*Milei\s*<', html)
     assert re.search(r'data-priority-keyword="false"[\s\S]*?>\s*economía\s*<', html)
+
+
+def test_editor_jefe_ia_keywords_use_shared_keyword_modal_flow(monkeypatch):
+    import app as panel
+
+    selection = {
+        "cluster_id": 7,
+        "title": "Cluster destacado",
+        "reason": "Relevant",
+        "editorial_score": 55,
+        "technical_score": 42,
+        "news_count": 3,
+        "source_count": 2,
+    }
+
+    monkeypatch.setattr(panel, "listar_keywords_prioridad_activas", lambda: [{"keyword": "milei", "activo": True}])
+    monkeypatch.setattr(panel, "obtener_keywords_por_clusters_ids", lambda _conn, _ids: {7: ["Milei", "economía"]})
+
+    class Connection:
+        def close(self):
+            return None
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=lambda *_: [dict(selection)],
+    )
+
+    response = panel.app.test_client().get("/editor-jefe-ia")
+
+    html = response.get_data(as_text=True)
+    assert response.status_code == 200
+    assert html.count("openKeywordModal('") >= 2
+    assert 'id="keywordModalForm"' in html
+    assert 'action="/keywords-prioridad/upsert"' in html
+    assert 'name="return_to" value="editor_jefe_ia"' in html
+    assert "Milei" in html
+    assert "economía" in html
+
+
+def test_upsert_keyword_prioridad_redirects_back_to_editor_jefe_ia(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        rowcount = 1
+
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            return None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def rollback(self):
+            executed.append(("rollback", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    response = panel.app.test_client().post(
+        "/keywords-prioridad/upsert",
+        data={
+            "keyword": "Milei",
+            "puntos": "10",
+            "tipo": "keyword",
+            "activo": "on",
+            "return_to": "editor_jefe_ia",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/editor-jefe-ia")
+    assert any("INSERT INTO keywords_prioridad" in sql for sql, _ in executed if isinstance(sql, str))
+    assert ("commit", None) in executed
 
 
 def test_failure_observability_uses_safe_categories_only(caplog):

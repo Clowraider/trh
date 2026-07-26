@@ -15,6 +15,11 @@
         box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
         filter: saturate(1.1) contrast(1.05);
       }
+      .priority-keyword {
+        color: #0d6efd;
+        border-color: #0d6efd !important;
+        background-color: rgba(13, 110, 253, 0.08) !important;
+      }
     </style>
   </head>
   <body class="bg-light">
@@ -79,12 +84,27 @@
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
               </div>
             </div>
-            <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
-            <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
-            <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
-          </div></article>
-        {% endfor %}
-      {% endif %}
+             <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
+             <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
+             <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+             {% if item.cluster_keywords %}
+               <div class="mt-2" style="font-size: 0.75rem">
+                 {% for kw in item.cluster_keywords[:8] %}
+                    <button
+                      type="button"
+                      class="badge border me-1 mb-1 {{ 'priority-keyword' if kw.is_priority else 'text-bg-light' }}"
+                      data-priority-keyword="{{ 'true' if kw.is_priority else 'false' }}"
+                      style="border: 0"
+                      onclick="openKeywordModal('{{ kw.label|replace("'", "&#39;") }}')"
+                    >
+                      {{ kw.label }}
+                    </button>
+                 {% endfor %}
+               </div>
+             {% endif %}
+           </div></article>
+         {% endfor %}
+       {% endif %}
 
       {% if saved_recommendations %}
         <section class="mt-4">
@@ -134,12 +154,27 @@
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('cluster_detalle', cluster_id=item.cluster_id) }}">Ver cluster</a>
                 </div>
               </div>
-              <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
-              <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
-              <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
-              {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
-                <div class="collapse mt-3" id="quick-publish-{{ item.cluster_id }}">
-                  <div class="border rounded bg-light p-3">
+               <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
+               <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
+               <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+               {% if item.cluster_keywords %}
+                 <div class="mt-2" style="font-size: 0.75rem">
+                   {% for kw in item.cluster_keywords[:8] %}
+                      <button
+                        type="button"
+                        class="badge border me-1 mb-1 {{ 'priority-keyword' if kw.is_priority else 'text-bg-light' }}"
+                        data-priority-keyword="{{ 'true' if kw.is_priority else 'false' }}"
+                        style="border: 0"
+                        onclick="openKeywordModal('{{ kw.label|replace("'", "&#39;") }}')"
+                      >
+                        {{ kw.label }}
+                      </button>
+                   {% endfor %}
+                 </div>
+               {% endif %}
+               {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
+                 <div class="collapse mt-3" id="quick-publish-{{ item.cluster_id }}">
+                   <div class="border rounded bg-light p-3">
                     <p class="small text-muted mb-3">
                       Elegí la foto principal, las secundarias y publicá directo sin pasar por el preview.
                     </p>
@@ -166,5 +201,7 @@
       {% endif %}
     </main>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    {% set keyword_modal_return_to = 'editor_jefe_ia' %}
+    {% include '_keyword_priority_modal.html' %}
   </body>
 </html>
