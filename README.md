@@ -27,6 +27,38 @@ Pipeline para extraer noticias, procesarlas con embeddings/clustering, asistir e
 
 ## Instalación desde cero
 
+### Instalación rápida
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Clowraider/trh/main/install.sh | sh
+```
+
+Para pasar opciones al instalador interno:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Clowraider/trh/main/install.sh | sh -s -- --dry-run
+```
+
+### Requisitos y preparación
+
+Antes de correr el instalador, asegurate de esto:
+
+- **PostgreSQL disponible**: la app necesita PostgreSQL y la extensión `pgvector` para embeddings y similitud.
+- **Usuario normal, no root**: ejecutá el instalador con una cuenta común. `scripts/install.sh` usa `sudo` solo cuando hace falta para paquetes del sistema.
+- **OpenRouter con saldo**: necesitás una API key válida y con crédito disponible para que funcionen las integraciones del proyecto.
+- **WordPress listo para integración**: vas a necesitar la URL del sitio, el usuario y una **Application Password** de WordPress.
+- **Modelo de embeddings local y estable**: definí un modelo local de embeddings en tu idioma.
+
+### Sobre el modelo de embeddings
+
+El modelo de embeddings conviene que sea **local**.
+
+¿Por qué?
+
+- porque **no debe cambiar con el tiempo**;
+- porque si cambia el modelo, cambian los vectores y perdés consistencia histórica;
+- porque el backup del archivo del modelo vale **oro**: guardalo como un artefacto crítico de tu instalación.
+
 1) Crear entorno e instalar dependencias:
 
 ```bash
