@@ -108,12 +108,8 @@ python3 proceso.py
 ```
 
 `proceso.py` hace:
-- Crawlers en paralelo:
-  - `crawler/elliberal_crawler.py`
-  - `crawler/panorama_crawler.py`
-  - `crawler/nuevodiario_crawler.py`
-  - `crawler/termasdigital_crawler.py`
-  - `crawler/sursantiago_crawler.py`
+- Crawlers en paralelo: descubre y ejecuta automáticamente todos los archivos `crawler/sites/*_crawler.py`. Ahí es donde cada instalación agrega sus propios extractores; no van al repo base.
+- Como ejemplo y punto de partida se incluye `crawler/sites/plantilla_crawler.py`. Copialo, renombralo y adaptalo a tu sitio.
 - Luego, secuencial:
   - `pipeline/embedding_archivo.py`
   - `pipeline/cluster_noticias.py`

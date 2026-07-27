@@ -7,13 +7,22 @@ from pathlib import Path
 # Scripts que se ejecutan EN PARALELO
 # ----------------------------------------
 
-scripts_paralelos = [
-    "crawler/elliberal_crawler.py",
-    "crawler/panorama_crawler.py",
-    "crawler/nuevodiario_crawler.py",
-    "crawler/termasdigital_crawler.py",
-    "crawler/sursantiago_crawler.py",
-]
+def discover_crawler_scripts(sites_dir=None, base_dir=None):
+    """Descubre los scripts de crawler dentro de crawler/sites/."""
+    if base_dir is None:
+        base_dir = Path(__file__).resolve().parent
+    if sites_dir is None:
+        sites_dir = base_dir / "crawler" / "sites"
+    # El plantilla es un ejemplo documentado; no debe ejecutarse como crawler real.
+    excluded = {"plantilla_crawler.py"}
+    return sorted(
+        str(path.relative_to(base_dir))
+        for path in sites_dir.glob("*_crawler.py")
+        if path.name not in excluded
+    )
+
+
+scripts_paralelos = discover_crawler_scripts()
 
 # ----------------------------------------
 # Scripts que se ejecutan DESPUÉS,

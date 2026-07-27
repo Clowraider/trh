@@ -17,3 +17,10 @@ static/uploads/tmp/
 # Virtual env
 venv/
 .venv/
+
+# Installation-specific crawlers (not part of the shared repo)
+crawler/sites/elliberal_crawler.py
+crawler/sites/panorama_crawler.py
+crawler/sites/nuevodiario_crawler.py
+crawler/sites/termasdigital_crawler.py
+crawler/sites/sursantiago_crawler.py
