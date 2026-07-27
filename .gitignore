@@ -3,6 +3,9 @@
 .pi/
 .pi-lens/
 
+# Runtime lock files
+.trh/locks/
+
 # Python
 __pycache__/
 *.pyc

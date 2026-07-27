@@ -1,8 +1,76 @@
+import os
 import unittest
+import unittest.mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import proceso
+
+
+class TestProcesoLockPaths(unittest.TestCase):
+    def test_lock_paths_use_project_internal_directory_by_default(self):
+        """Los locks deben estar en un directorio interno, no en /tmp."""
+        env_backup = os.environ.get("TRH_LOCK_DIR")
+        os.environ.pop("TRH_LOCK_DIR", None)
+        try:
+            import importlib
+
+            importlib.reload(proceso)
+            self.assertNotEqual(proceso.LOCK_DIR, Path("/tmp"))
+            self.assertTrue(
+                str(proceso.LOCK_DIR).endswith(".trh/locks")
+                or str(proceso.LOCK_DIR).endswith(".trh\\locks")
+            )
+        finally:
+            if env_backup is None:
+                os.environ.pop("TRH_LOCK_DIR", None)
+            else:
+                os.environ["TRH_LOCK_DIR"] = env_backup
+            importlib.reload(proceso)
+
+    def test_lock_paths_respect_trh_lock_dir_env_variable(self):
+        """TRH_LOCK_DIR permite sobreescribir la ubicación de los locks."""
+        with TemporaryDirectory() as tmp:
+            expected = Path(tmp) / "custom_locks"
+            env_backup = os.environ.get("TRH_LOCK_DIR")
+            os.environ["TRH_LOCK_DIR"] = str(expected)
+            try:
+                # Recargamos el módulo para que tome la nueva variable de entorno.
+                import importlib
+
+                importlib.reload(proceso)
+                self.assertEqual(proceso.LOCK_DIR, expected)
+                self.assertEqual(proceso.RUN_LOCK_PATH, expected / "trh_proceso_run.lock")
+                self.assertEqual(proceso.QUEUE_LOCK_PATH, expected / "trh_proceso_queue.lock")
+            finally:
+                if env_backup is None:
+                    os.environ.pop("TRH_LOCK_DIR", None)
+                else:
+                    os.environ["TRH_LOCK_DIR"] = env_backup
+                importlib.reload(proceso)
+
+    def test_main_creates_lock_directory_and_files(self):
+        """main() crea el directorio de locks y los archivos de lock antes de usarlos."""
+        with TemporaryDirectory() as tmp:
+            lock_dir = Path(tmp) / "locks"
+            env_backup = os.environ.get("TRH_LOCK_DIR")
+            os.environ["TRH_LOCK_DIR"] = str(lock_dir)
+            try:
+                import importlib
+
+                importlib.reload(proceso)
+                # Evitamos ejecutar el pipeline real; solo importa la lógica de locks.
+                with unittest.mock.patch.object(proceso, "ejecutar_pipeline"):
+                    proceso.main()
+                self.assertTrue(lock_dir.is_dir())
+                self.assertTrue((lock_dir / "trh_proceso_run.lock").exists())
+                self.assertTrue((lock_dir / "trh_proceso_queue.lock").exists())
+            finally:
+                if env_backup is None:
+                    os.environ.pop("TRH_LOCK_DIR", None)
+                else:
+                    os.environ["TRH_LOCK_DIR"] = env_backup
+                importlib.reload(proceso)
 
 
 class TestProcesoDiscovery(unittest.TestCase):

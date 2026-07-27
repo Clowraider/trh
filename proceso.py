@@ -1,4 +1,5 @@
 import fcntl
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,7 +36,11 @@ scripts_secuenciales = [
     "pipeline/extraer_keywords_ner.py",
 ]
 
-LOCK_DIR = Path("/tmp")
+# Usamos un directorio interno del proyecto para los locks en lugar de /tmp.
+# Así evitamos problemas de permisos cuando otro usuario (ej. root) creó los
+# archivos de lock en /tmp. Se puede sobreescribir con TRH_LOCK_DIR.
+PROJECT_ROOT = Path(__file__).resolve().parent
+LOCK_DIR = Path(os.environ.get("TRH_LOCK_DIR", PROJECT_ROOT / ".trh" / "locks"))
 RUN_LOCK_PATH = LOCK_DIR / "trh_proceso_run.lock"
 QUEUE_LOCK_PATH = LOCK_DIR / "trh_proceso_queue.lock"
 
@@ -68,6 +73,7 @@ def ejecutar_pipeline():
 
 
 def main():
+    LOCK_DIR.mkdir(parents=True, exist_ok=True)
     RUN_LOCK_PATH.touch(exist_ok=True)
     QUEUE_LOCK_PATH.touch(exist_ok=True)
 
