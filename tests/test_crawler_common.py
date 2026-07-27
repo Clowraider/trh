@@ -3,13 +3,13 @@ import inspect
 import sys
 import types
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 psycopg2_stub = types.ModuleType("psycopg2")
 setattr(psycopg2_stub, "connect", lambda **kwargs: None)
-sys.modules.setdefault("psycopg2", psycopg2_stub)
 
 psycopg2_extras_stub = types.ModuleType("psycopg2.extras")
 
@@ -19,15 +19,12 @@ def _json_passthrough(value):
 
 
 setattr(psycopg2_extras_stub, "Json", _json_passthrough)
-sys.modules.setdefault("psycopg2.extras", psycopg2_extras_stub)
 
 dotenv_stub = types.ModuleType("dotenv")
 setattr(dotenv_stub, "load_dotenv", lambda *args, **kwargs: None)
-sys.modules.setdefault("dotenv", dotenv_stub)
 
 requests_stub = types.ModuleType("requests")
 setattr(requests_stub, "Session", object)
-sys.modules.setdefault("requests", requests_stub)
 
 bs4_stub = types.ModuleType("bs4")
 
@@ -37,15 +34,35 @@ class _BeautifulSoupStub:
 
 
 setattr(bs4_stub, "BeautifulSoup", _BeautifulSoupStub)
-sys.modules.setdefault("bs4", bs4_stub)
+
+
+@contextmanager
+def _patched_imports(*, include_common=False):
+    patched_modules = {
+        "psycopg2": psycopg2_stub,
+        "psycopg2.extras": psycopg2_extras_stub,
+        "dotenv": dotenv_stub,
+        "requests": requests_stub,
+        "bs4": bs4_stub,
+    }
+    if include_common:
+        patched_modules["common"] = common
+
+    with patch.dict(sys.modules, patched_modules):
+        yield
+
+
+def _load_module(module_name, module_path, *, include_common=False):
+    spec = importlib.util.spec_from_file_location(module_name, module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    with _patched_imports(include_common=include_common):
+        spec.loader.exec_module(module)
+    return module
 
 
 COMMON_PATH = Path(__file__).resolve().parent.parent / "crawler" / "common.py"
-spec = importlib.util.spec_from_file_location("crawler_common", COMMON_PATH)
-assert spec is not None and spec.loader is not None
-common = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(common)
-sys.modules.setdefault("common", common)
+common = _load_module("crawler_common", COMMON_PATH)
 
 
 class RecordingCursor:
@@ -386,10 +403,11 @@ class TestCrawlerCommon(unittest.TestCase):
         for crawler_file in crawler_files:
             with self.subTest(crawler_file=crawler_file):
                 module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
-                spec = importlib.util.spec_from_file_location(crawler_file.replace(".py", ""), module_path)
-                assert spec is not None and spec.loader is not None
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                module = _load_module(
+                    crawler_file.replace(".py", ""),
+                    module_path,
+                    include_common=True,
+                )
 
                 connection = RecordingConnection()
 
@@ -428,10 +446,11 @@ class TestCrawlerCommon(unittest.TestCase):
         for crawler_file in crawler_files:
             with self.subTest(crawler_file=crawler_file):
                 module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
-                spec = importlib.util.spec_from_file_location(crawler_file.replace(".py", ""), module_path)
-                assert spec is not None and spec.loader is not None
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                module = _load_module(
+                    crawler_file.replace(".py", ""),
+                    module_path,
+                    include_common=True,
+                )
 
                 signature = inspect.signature(module.procesar_pagina)
 
@@ -443,17 +462,18 @@ class TestCrawlerCommon(unittest.TestCase):
             "elliberal_crawler.py": 100,
             "nuevodiario_crawler.py": 100,
             "panorama_crawler.py": 100,
-            "sursantiago_crawler.py": 50,
+            "sursantiago_crawler.py": 100,
             "termasdigital_crawler.py": 100,
         }
 
         for crawler_file, expected_cap in crawler_expectations.items():
             with self.subTest(crawler_file=crawler_file):
                 module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
-                spec = importlib.util.spec_from_file_location(crawler_file.replace(".py", ""), module_path)
-                assert spec is not None and spec.loader is not None
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                module = _load_module(
+                    crawler_file.replace(".py", ""),
+                    module_path,
+                    include_common=True,
+                )
 
                 with patch.object(module, "run_crawler_template") as runner_mock:
                     module.main()

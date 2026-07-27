@@ -344,7 +344,72 @@ def obtener_noticias_cluster(cluster_id):
         conn.close()
 
 
-def recalcular_cluster_editorial(cur, cluster_id):
+def _normalize_fotos_secundarias(value):
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return []
+
+
+def _split_requires_pending_publication_state(estado_publicacion):
+    estado = (estado_publicacion or 'pendiente').strip() or 'pendiente'
+    return estado in {'generando', 'generado', 'publicado'}
+
+
+def _revert_requires_generated_asset_reset(estado_publicacion):
+    estado = (estado_publicacion or 'pendiente').strip() or 'pendiente'
+    return estado in {'generado', 'publicado'}
+
+
+def _generation_in_flight_blocks_revert(estado_publicacion):
+    estado = (estado_publicacion or 'pendiente').strip() or 'pendiente'
+    return estado == 'generando'
+
+
+def _published_cluster_blocks_transition(estado_publicacion):
+    estado = (estado_publicacion or 'pendiente').strip() or 'pendiente'
+    return estado == 'publicado'
+
+
+def _resolve_cluster_publication_state(cluster_actual, *, total_noticias, reset_generated_content=False):
+    estado_publicacion = (cluster_actual.get('estado_publicacion') or 'pendiente').strip() or 'pendiente'
+    contenido_ia = cluster_actual.get('contenido_ia')
+    foto_principal = cluster_actual.get('foto_principal')
+    fotos_secundarias = _normalize_fotos_secundarias(cluster_actual.get('fotos_secundarias'))
+
+    if total_noticias == 0:
+        estado_publicacion = 'descartado'
+    elif reset_generated_content:
+        estado_publicacion = 'pendiente'
+        contenido_ia = None
+        foto_principal = None
+        fotos_secundarias = []
+
+    return {
+        'estado_publicacion': estado_publicacion,
+        'contenido_ia': contenido_ia,
+        'foto_principal': foto_principal,
+        'fotos_secundarias': fotos_secundarias,
+    }
+
+
+def _normalize_contenido_ia_for_db(contenido_ia):
+    if contenido_ia is None:
+        return None
+    if isinstance(contenido_ia, (dict, list)):
+        return json.dumps(contenido_ia, ensure_ascii=False)
+    return contenido_ia
+
+
+def recalcular_cluster_editorial(cur, cluster_id, *, reset_generated_content=False):
     """
     Recalcula metadata de un cluster editorial según sus noticias actuales.
     """
@@ -374,8 +439,21 @@ def recalcular_cluster_editorial(cur, cluster_id):
     top = cur.fetchone() or {}
     titulo = (top.get('titulo') or '').strip() or f"Cluster #{cluster_id}"
 
+    cur.execute("""
+        SELECT estado_publicacion, contenido_ia, foto_principal, fotos_secundarias
+        FROM clusters_editoriales
+        WHERE id = %s
+    """, (cluster_id,))
+    cluster_actual = cur.fetchone() or {}
+
     score = total_noticias * 2 + total_fuentes * 5
     tendencia = total_noticias
+
+    publication_state = _resolve_cluster_publication_state(
+        cluster_actual,
+        total_noticias=total_noticias,
+        reset_generated_content=reset_generated_content,
+    )
 
     cur.execute("""
         UPDATE clusters_editoriales
@@ -387,13 +465,10 @@ def recalcular_cluster_editorial(cur, cluster_id):
             ultima_noticia = %s,
             score = %s,
             tendencia = %s,
-            estado_publicacion = CASE
-                WHEN %s = 0 THEN 'descartado'
-                ELSE 'pendiente'
-            END,
-            contenido_ia = CASE WHEN %s = 0 THEN contenido_ia ELSE NULL END,
-            foto_principal = CASE WHEN %s = 0 THEN foto_principal ELSE NULL END,
-            fotos_secundarias = CASE WHEN %s = 0 THEN fotos_secundarias ELSE '[]'::jsonb END,
+            estado_publicacion = %s,
+            contenido_ia = %s,
+            foto_principal = %s,
+            fotos_secundarias = %s::jsonb,
             actualizado_en = NOW()
         WHERE id = %s
     """, (
@@ -404,10 +479,10 @@ def recalcular_cluster_editorial(cur, cluster_id):
         ultima,
         score,
         tendencia,
-        total_noticias,
-        total_noticias,
-        total_noticias,
-        total_noticias,
+        publication_state['estado_publicacion'],
+        _normalize_contenido_ia_for_db(publication_state['contenido_ia']),
+        publication_state['foto_principal'],
+        json.dumps(publication_state['fotos_secundarias'], ensure_ascii=False),
         cluster_id,
     ))
 
@@ -1467,11 +1542,29 @@ def split_cluster(cluster_id):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM clusters_editoriales WHERE id = %s", (cluster_id,))
+            cur.execute("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (cluster_id,))
             origen = cur.fetchone()
             if not origen:
                 flash("Cluster origen no encontrado.", "danger")
                 return redirect(url_for('index'))
+
+            if _split_requires_pending_publication_state(origen.get('estado_publicacion')):
+                if _published_cluster_blocks_transition(origen.get('estado_publicacion')):
+                    flash(
+                        "No se puede partir un cluster publicado porque ya tiene una nota activa en WordPress.",
+                        "warning",
+                    )
+                elif _generation_in_flight_blocks_revert(origen.get('estado_publicacion')):
+                    flash(
+                        "No se puede partir un cluster mientras se está generando el artículo. Esperá a que termine el proceso.",
+                        "warning",
+                    )
+                else:
+                    flash(
+                        "No se puede partir un cluster generado. Revertí primero a pendiente si necesitás dividirlo.",
+                        "warning",
+                    )
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
             cur.execute("SELECT COUNT(*) AS total FROM noticias_historico WHERE cluster_id = %s", (cluster_id,))
             total_origen = int((cur.fetchone() or {}).get('total') or 0)
@@ -1517,7 +1610,7 @@ def split_cluster(cluster_id):
                 raise RuntimeError("No se pudieron mover todas las noticias seleccionadas.")
 
             recalcular_cluster_editorial(cur, cluster_id)
-            recalcular_cluster_editorial(cur, nuevo_cluster_id)
+            recalcular_cluster_editorial(cur, nuevo_cluster_id, reset_generated_content=True)
 
         conn.commit()
         flash(
@@ -1595,12 +1688,48 @@ def revertir_estado(cluster_id):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET estado_publicacion = 'pendiente',
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (cluster_id,))
+            cur.execute(
+                "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+                (cluster_id,),
+            )
+            cluster = cur.fetchone()
+            if not cluster:
+                flash("Cluster no encontrado", "warning")
+                return redirect(url_for('index'))
+
+            if _generation_in_flight_blocks_revert(cluster.get('estado_publicacion')):
+                flash(
+                    "No se puede revertir un cluster mientras la generación sigue en curso.",
+                    "warning",
+                )
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            if _published_cluster_blocks_transition(cluster.get('estado_publicacion')):
+                flash(
+                    "No se puede revertir un cluster publicado porque la nota sigue activa en WordPress.",
+                    "warning",
+                )
+                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
+            if _revert_requires_generated_asset_reset(cluster.get('estado_publicacion')):
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET estado_publicacion = 'pendiente',
+                        contenido_ia = NULL,
+                        foto_principal = NULL,
+                        fotos_secundarias = '[]'::jsonb,
+                        url_wp = NULL,
+                        requiere_revision_editorial = FALSE,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (cluster_id,))
+            else:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET estado_publicacion = 'pendiente',
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (cluster_id,))
         conn.commit()
         flash("Revertido a pendiente", "info")
     finally:

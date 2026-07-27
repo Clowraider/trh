@@ -181,6 +181,40 @@
           <h5 class="mb-0">📰 Noticias fuente ({{ noticias|length }})</h5>
         </div>
         <div class="card-body">
+          {% if estado == 'generado' %}
+          <div class="alert alert-warning d-flex justify-content-between align-items-center gap-3 flex-wrap">
+            <div>
+              <strong>Para partir este cluster, primero volvelo a pendiente.</strong>
+              <div class="small mb-0">
+                Eso invalida el contenido generado actual para que el split sea seguro.
+              </div>
+            </div>
+            <form
+              method="POST"
+              action="/revertir/{{ cluster.id }}"
+              class="d-inline"
+            >
+              <button type="submit" class="btn btn-sm btn-outline-warning">
+                Revertir a pendiente
+              </button>
+            </form>
+          </div>
+          {% elif estado == 'generando' %}
+          <div class="alert alert-info">
+            <strong>No se puede partir ni revertir mientras la generación está en curso.</strong>
+            <div class="small mb-0 mt-1">
+              Esperá a que termine la generación antes de intentar cambios estructurales sobre este cluster.
+            </div>
+          </div>
+          {% elif estado == 'publicado' %}
+          <div class="alert alert-warning">
+            <strong>No se puede partir ni revertir un cluster publicado.</strong>
+            <div class="small mb-0 mt-1">
+              La nota ya está activa en WordPress, así que este estado no admite volver a pendiente ni dividir el cluster.
+            </div>
+          </div>
+          {% endif %}
+          {% if estado not in ('generando', 'generado', 'publicado') %}
           <form
             method="POST"
             action="/split-cluster/{{ cluster.id }}"
@@ -190,9 +224,11 @@
               );
             "
           >
+          {% endif %}
             {% for noticia in noticias %}
             <div class="noticia-item">
               <div class="row align-items-start g-2">
+                {% if estado not in ('generando', 'generado', 'publicado') %}
                 <div class="col-auto pt-1">
                   <input
                     type="checkbox"
@@ -202,6 +238,7 @@
                     title="Seleccionar para nuevo cluster"
                   />
                 </div>
+                {% endif %}
 
                 <!-- Foto thumbnail -->
                 <div class="col-auto">
@@ -246,6 +283,7 @@
             </div>
             {% endfor %}
 
+            {% if estado not in ('generando', 'generado', 'publicado') %}
             <div class="d-flex justify-content-between align-items-center mt-3">
               <small class="text-muted">
                 Seleccioná las noticias que querés mover al nuevo cluster.
@@ -255,6 +293,7 @@
               </button>
             </div>
           </form>
+          {% endif %}
         </div>
       </div>
 

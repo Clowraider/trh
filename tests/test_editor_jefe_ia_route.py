@@ -729,6 +729,209 @@ def test_cluster_detail_shows_editorial_review_gate_and_explicit_approval_action
     assert b"/publicar/7" not in response.data
 
 
+def test_cluster_detail_exposes_revert_to_pending_action_for_generated_clusters(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": "Cluster generado",
+            "estado_publicacion": "generado",
+            "requiere_revision_editorial": False,
+            "cantidad_noticias": 2,
+            "cantidad_fuentes": 1,
+            "score": 88,
+            "nota_ia": "",
+            "contenido_ia": None,
+            "fotos_manuales": [],
+            "url_wp": None,
+        },
+    )
+    monkeypatch.setattr(panel, "obtener_noticias_cluster", lambda _cluster_id: [])
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert b"/revertir/7" in response.data
+    assert b"Revertir a pendiente" in response.data
+    assert b"/split-cluster/7" not in response.data
+    assert b"Partir cluster con seleccionadas" not in response.data
+
+
+def test_cluster_detail_hides_split_and_revert_actions_while_generation_is_in_flight(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": "Cluster generando",
+            "estado_publicacion": "generando",
+            "requiere_revision_editorial": False,
+            "cantidad_noticias": 2,
+            "cantidad_fuentes": 1,
+            "score": 88,
+            "nota_ia": "",
+            "contenido_ia": None,
+            "fotos_manuales": [],
+            "url_wp": None,
+        },
+    )
+    monkeypatch.setattr(panel, "obtener_noticias_cluster", lambda _cluster_id: [])
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert b"/revertir/7" not in response.data
+    assert b"/split-cluster/7" not in response.data
+    assert b"Revertir a pendiente" not in response.data
+    assert b"Partir cluster con seleccionadas" not in response.data
+    assert "No se puede partir ni revertir mientras la generación está en curso.".encode("utf-8") in response.data
+
+
+def test_cluster_detail_hides_revert_and_split_actions_for_published_clusters(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": "Cluster publicado",
+            "estado_publicacion": "publicado",
+            "requiere_revision_editorial": False,
+            "cantidad_noticias": 2,
+            "cantidad_fuentes": 1,
+            "score": 88,
+            "nota_ia": "",
+            "contenido_ia": None,
+            "fotos_manuales": [],
+            "url_wp": "https://wp.test/7",
+        },
+    )
+    monkeypatch.setattr(panel, "obtener_noticias_cluster", lambda _cluster_id: [])
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert b"/revertir/7" not in response.data
+    assert b"/split-cluster/7" not in response.data
+    assert b"Revertir a pendiente" not in response.data
+    assert b"Partir cluster con seleccionadas" not in response.data
+    assert "No se puede partir ni revertir un cluster publicado.".encode("utf-8") in response.data
+
+
+def test_cluster_detail_keeps_split_action_for_pending_clusters(monkeypatch):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": "Cluster pendiente",
+            "estado_publicacion": "pendiente",
+            "requiere_revision_editorial": False,
+            "cantidad_noticias": 2,
+            "cantidad_fuentes": 1,
+            "score": 88,
+            "nota_ia": "",
+            "contenido_ia": None,
+            "fotos_manuales": [],
+            "url_wp": None,
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_noticias_cluster",
+        lambda _cluster_id: [
+            {
+                "id": 11,
+                "fuente": "Fuente",
+                "titulo": "Título",
+                "url_original": "https://example.com/nota",
+                "url_imagen": None,
+                "fecha_publicacion": None,
+            }
+        ],
+    )
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert b"/split-cluster/7" in response.data
+    assert b"Partir cluster con seleccionadas" in response.data
+    assert b"/revertir/7" not in response.data
+
+
+@pytest.mark.parametrize(
+    ("estado_publicacion", "expected_notice"),
+    [
+        (
+            "generando",
+            "No se puede partir ni revertir mientras la generación está en curso.",
+        ),
+        (
+            "generado",
+            "Para partir este cluster, primero volvelo a pendiente.",
+        ),
+        (
+            "publicado",
+            "No se puede partir ni revertir un cluster publicado.",
+        ),
+    ],
+)
+def test_cluster_detail_keeps_source_news_visible_when_split_actions_are_blocked(
+    monkeypatch, estado_publicacion, expected_notice
+):
+    import app as panel
+
+    monkeypatch.setattr(
+        panel,
+        "obtener_cluster_db",
+        lambda cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": f"Cluster {estado_publicacion}",
+            "estado_publicacion": estado_publicacion,
+            "requiere_revision_editorial": False,
+            "cantidad_noticias": 1,
+            "cantidad_fuentes": 1,
+            "score": 88,
+            "nota_ia": "",
+            "contenido_ia": None,
+            "fotos_manuales": [],
+            "url_wp": "https://wp.test/7" if estado_publicacion == "publicado" else None,
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "obtener_noticias_cluster",
+        lambda _cluster_id: [
+            {
+                "id": 11,
+                "fuente": "Fuente visible",
+                "titulo": "Título visible",
+                "url_original": "https://example.com/nota-visible",
+                "url_imagen": None,
+                "fecha_publicacion": None,
+            }
+        ],
+    )
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert expected_notice.encode("utf-8") in response.data
+    assert "Fuente visible".encode("utf-8") in response.data
+    assert "Título visible".encode("utf-8") in response.data
+    assert b"https://example.com/nota-visible" in response.data
+    assert b"/split-cluster/7" not in response.data
+    assert b"name=\"noticias_split\"" not in response.data
+
+
 def test_generated_saved_recommendation_shows_quick_publish_controls_only_for_generated(monkeypatch):
     import app as panel
 
@@ -1188,6 +1391,402 @@ def test_descartar_cluster_can_return_to_editor_jefe_ia(monkeypatch):
     assert any("UPDATE clusters_editoriales SET estado_publicacion = 'descartado'" in sql for sql, _ in executed if isinstance(sql, str))
     assert removed == [(panel.get_connection, 7)]
     assert ("commit", None) in executed
+
+
+def test_split_cluster_blocks_generated_or_published_source_clusters(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            if len(executed) == 1:
+                return {"id": 7, "estado_publicacion": "generado"}
+            raise AssertionError("No further queries should run when split is blocked")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def rollback(self):
+            executed.append(("rollback", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post(
+        "/split-cluster/7",
+        data={"noticias_split": ["11"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        ("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (7,)),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [
+        (
+            "warning",
+            "No se puede partir un cluster generado. Revertí primero a pendiente si necesitás dividirlo.",
+        )
+    ]
+
+
+def test_split_cluster_blocks_clusters_with_generation_in_flight(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            if len(executed) == 1:
+                return {"id": 7, "estado_publicacion": "generando"}
+            raise AssertionError("No further queries should run when split is blocked")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def rollback(self):
+            executed.append(("rollback", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post(
+        "/split-cluster/7",
+        data={"noticias_split": ["11"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        ("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (7,)),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [
+        (
+            "warning",
+            "No se puede partir un cluster mientras se está generando el artículo. Esperá a que termine el proceso.",
+        )
+    ]
+
+
+def test_split_cluster_blocks_published_source_clusters_without_revert_guidance(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            if len(executed) == 1:
+                return {"id": 7, "estado_publicacion": "publicado"}
+            raise AssertionError("No further queries should run when split is blocked")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def rollback(self):
+            executed.append(("rollback", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post(
+        "/split-cluster/7",
+        data={"noticias_split": ["11"]},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        ("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (7,)),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [
+        (
+            "warning",
+            "No se puede partir un cluster publicado porque ya tiene una nota activa en WordPress.",
+        )
+    ]
+
+
+def test_revertir_estado_resets_generated_content_media_and_publication_url(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def __init__(self):
+            self.fetchone_calls = 0
+
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            self.fetchone_calls += 1
+            if self.fetchone_calls == 1:
+                return {
+                    "id": 7,
+                    "estado_publicacion": "generado",
+                    "requiere_revision_editorial": True,
+                }
+            raise AssertionError("Unexpected extra fetchone() call")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post("/revertir/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        (
+            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
+        (
+            "UPDATE clusters_editoriales SET estado_publicacion = 'pendiente', contenido_ia = NULL, foto_principal = NULL, fotos_secundarias = '[]'::jsonb, url_wp = NULL, requiere_revision_editorial = FALSE, actualizado_en = NOW() WHERE id = %s",
+            (7,),
+        ),
+        ("commit", None),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [("info", "Revertido a pendiente")]
+
+
+def test_revertir_estado_blocks_published_clusters(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def __init__(self):
+            self.fetchone_calls = 0
+
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            self.fetchone_calls += 1
+            if self.fetchone_calls == 1:
+                return {"id": 7, "estado_publicacion": "publicado"}
+            raise AssertionError("Unexpected extra fetchone() call")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post("/revertir/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        (
+            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [
+        (
+            "warning",
+            "No se puede revertir un cluster publicado porque la nota sigue activa en WordPress.",
+        )
+    ]
+
+
+def test_revertir_estado_blocks_clusters_with_generation_in_flight(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def __init__(self):
+            self.fetchone_calls = 0
+
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            self.fetchone_calls += 1
+            if self.fetchone_calls == 1:
+                return {"id": 7, "estado_publicacion": "generando"}
+            raise AssertionError("Unexpected extra fetchone() call")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post("/revertir/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        (
+            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [
+        (
+            "warning",
+            "No se puede revertir un cluster mientras la generación sigue en curso.",
+        )
+    ]
+
+
+def test_revertir_estado_from_descartado_preserves_generated_assets(monkeypatch):
+    import app as panel
+
+    executed = []
+
+    class Cursor:
+        def __init__(self):
+            self.fetchone_calls = 0
+
+        def execute(self, sql, params=None):
+            executed.append((" ".join(sql.split()), params))
+
+        def fetchone(self):
+            self.fetchone_calls += 1
+            if self.fetchone_calls == 1:
+                return {"id": 7, "estado_publicacion": "descartado"}
+            raise AssertionError("Unexpected extra fetchone() call")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Connection:
+        def cursor(self):
+            return Cursor()
+
+        def commit(self):
+            executed.append(("commit", None))
+
+        def close(self):
+            executed.append(("close", None))
+
+    monkeypatch.setattr(panel, "get_connection", lambda: Connection())
+
+    client = panel.app.test_client()
+    response = client.post("/revertir/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert executed == [
+        (
+            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
+        (
+            "UPDATE clusters_editoriales SET estado_publicacion = 'pendiente', actualizado_en = NOW() WHERE id = %s",
+            (7,),
+        ),
+        ("commit", None),
+        ("close", None),
+    ]
+    assert pop_flashes(client) == [("info", "Revertido a pendiente")]
 
 
 def test_publicar_cluster_removes_saved_recommendation_on_success(monkeypatch):

@@ -32,7 +32,7 @@ EXCLUDE_PATHS = [
     '/audios', '/galerias', '/extras', '/widget', '/api/'
 ]
 MAX_URLS_POR_TANDA = 30
-MAX_NOTICIAS_POR_EJECUCION = 10
+MAX_NOTICIAS_POR_EJECUCION = 100
 DELAY = 2.8
 MAX_RETRIES = 3
 def clean_url(url):
