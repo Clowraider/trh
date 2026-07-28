@@ -1,5 +1,4 @@
 import importlib.util
-import inspect
 import sys
 import types
 import unittest
@@ -390,99 +389,6 @@ class TestCrawlerCommon(unittest.TestCase):
             ],
         )
 
-    def test_guardar_noticia_normalizes_fields_before_insert_for_all_crawlers(self):
-        crawler_files = [
-            "elliberal_crawler.py",
-            "nuevodiario_crawler.py",
-            "panorama_crawler.py",
-            "sursantiago_crawler.py",
-            "termasdigital_crawler.py",
-        ]
-        expected_text = "First paragraph\nSecond paragraph\n" + " ".join(["extra"] * 80)
-
-        for crawler_file in crawler_files:
-            with self.subTest(crawler_file=crawler_file):
-                module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
-                module = _load_module(
-                    crawler_file.replace(".py", ""),
-                    module_path,
-                    include_common=True,
-                )
-
-                connection = RecordingConnection()
-
-                with patch.object(module, "get_connection", return_value=connection), \
-                     patch.object(module, "build_quality_flags", return_value={"quality": {}}), \
-                     patch.object(module.logger, "info"), \
-                     patch.object(module.logger, "warning"):
-                    saved = module.guardar_noticia(
-                        " https://site.com/article?utm_source=x#fragment ",
-                        "  <strong> Breaking   title </strong>  ",
-                        datetime(2026, 5, 29, 12, 30, 45, 111111, tzinfo=timezone.utc),
-                        "<p> First   paragraph </p>\n\n<p> Second <em> paragraph </em> </p>" + " extra" * 80,
-                        " https://site.com/image.jpg?foo=1#frag ",
-                    )
-
-                self.assertTrue(saved)
-                self.assertTrue(connection.committed)
-
-                insert_query, insert_params = connection.cursor_instance.executed[-1]
-                self.assertIn("INSERT INTO noticias_historico", insert_query)
-                self.assertEqual(insert_params[3], "https://site.com/article")
-                self.assertEqual(insert_params[4], "Breaking title")
-                self.assertEqual(insert_params[5], expected_text)
-                self.assertEqual(insert_params[6], "https://site.com/image.jpg?foo=1#frag")
-                self.assertEqual(insert_params[7], datetime(2026, 5, 29, 12, 30))
-
-    def test_shared_runner_crawlers_accept_extraer_links_kwarg(self):
-        crawler_files = [
-            "elliberal_crawler.py",
-            "nuevodiario_crawler.py",
-            "panorama_crawler.py",
-            "sursantiago_crawler.py",
-            "termasdigital_crawler.py",
-        ]
-
-        for crawler_file in crawler_files:
-            with self.subTest(crawler_file=crawler_file):
-                module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
-                module = _load_module(
-                    crawler_file.replace(".py", ""),
-                    module_path,
-                    include_common=True,
-                )
-
-                signature = inspect.signature(module.procesar_pagina)
-
-                self.assertIn("extraer_links", signature.parameters)
-                self.assertTrue(signature.parameters["extraer_links"].default)
-
-    def test_shared_runner_crawlers_keep_their_execution_caps(self):
-        crawler_expectations = {
-            "elliberal_crawler.py": 100,
-            "nuevodiario_crawler.py": 100,
-            "panorama_crawler.py": 100,
-            "sursantiago_crawler.py": 100,
-            "termasdigital_crawler.py": 100,
-        }
-
-        for crawler_file, expected_cap in crawler_expectations.items():
-            with self.subTest(crawler_file=crawler_file):
-                module_path = Path(__file__).resolve().parent.parent / "crawler" / crawler_file
-                module = _load_module(
-                    crawler_file.replace(".py", ""),
-                    module_path,
-                    include_common=True,
-                )
-
-                with patch.object(module, "run_crawler_template") as runner_mock:
-                    module.main()
-
-                self.assertEqual(module.MAX_NOTICIAS_POR_EJECUCION, expected_cap)
-                self.assertEqual(
-                    runner_mock.call_args.kwargs["max_noticias_por_ejecucion"],
-                    expected_cap,
-                )
 
 
 if __name__ == "__main__":

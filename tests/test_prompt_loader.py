@@ -226,7 +226,7 @@ def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
     original_value = os.environ.get("ARTICLE_WRITER_USER_PROMPT_FILE")
     prompt_file = tmp_path / "article_writer_user_prompt.txt"
     prompt_file.write_text(
-        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block",
+        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block\n\nCategorías: $categories_list",
         encoding="utf-8",
     )
     monkeypatch.setenv("ARTICLE_WRITER_USER_PROMPT_FILE", str(prompt_file))
@@ -251,6 +251,8 @@ def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
         assert "FUENTE 1: Fuente Test" in prompt
         assert "CONTENIDO: Texto base..." in prompt
         assert "Seguí esta guía." in prompt
+        assert "Salud" in prompt
+        assert "$categories_list" not in prompt
     finally:
         if original_value is None:
             monkeypatch.delenv("ARTICLE_WRITER_USER_PROMPT_FILE", raising=False)
@@ -259,11 +261,34 @@ def test_publicador_uses_user_prompt_template_override(monkeypatch, tmp_path):
         importlib.reload(publicador)
 
 
+def test_publicador_fails_at_module_load_when_categories_file_is_invalid(
+    monkeypatch, tmp_path
+):
+    original_value = os.environ.get("ARTICLE_CATEGORIES_FILE")
+    categories_file = tmp_path / "article_categories.json"
+    categories_file.write_text(json.dumps({"categories": []}), encoding="utf-8")
+    monkeypatch.setenv("ARTICLE_CATEGORIES_FILE", str(categories_file))
+
+    publicador = importlib.import_module("trh.publication.publicador")
+    try:
+        with pytest.raises(RuntimeError, match="ARTICLE_CATEGORIES_FILE") as excinfo:
+            importlib.reload(publicador)
+
+        assert "invalid value" in str(excinfo.value)
+    finally:
+        if original_value is None:
+            monkeypatch.delenv("ARTICLE_CATEGORIES_FILE", raising=False)
+        else:
+            monkeypatch.setenv("ARTICLE_CATEGORIES_FILE", original_value)
+        importlib.reload(publicador)
+
+
 @pytest.mark.parametrize(
     ("template_text", "missing_placeholder"),
     [
         ("Fuentes:\n$editorial_guidance_block", "sources_block"),
         ("Fuentes:\n$sources_block", "editorial_guidance_block"),
+        ("Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block", "categories_list"),
     ],
 )
 def test_publicador_fails_when_user_prompt_template_misses_required_placeholders(
@@ -309,7 +334,7 @@ def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
     writer_system_prompt.write_text("Writer system override", encoding="utf-8")
     writer_user_prompt = tmp_path / "article_writer_user_prompt.txt"
     writer_user_prompt.write_text(
-        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block",
+        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block\n\nCategorías: $categories_list",
         encoding="utf-8",
     )
     editor_jefe_prompt = tmp_path / "editor_jefe_system_prompt.txt"
@@ -325,11 +350,17 @@ def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
         ),
         encoding="utf-8",
     )
+    article_categories = tmp_path / "article_categories.json"
+    article_categories.write_text(
+        json.dumps({"categories": ["Salud", "Política"]}),
+        encoding="utf-8",
+    )
     (tmp_path / ".env").write_text(
         "\n".join(
             [
                 f"ARTICLE_WRITER_SYSTEM_PROMPT_FILE={writer_system_prompt}",
                 f"ARTICLE_WRITER_USER_PROMPT_FILE={writer_user_prompt}",
+                f"ARTICLE_CATEGORIES_FILE={article_categories}",
                 f"EDITOR_JEFE_SYSTEM_PROMPT_FILE={editor_jefe_prompt}",
                 f"EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE={editorial_control_prompt}",
                 f"EDITORIAL_CONTROL_RULES_FILE={editorial_rules}",
@@ -342,6 +373,7 @@ def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
     for env_var in (
         "ARTICLE_WRITER_SYSTEM_PROMPT_FILE",
         "ARTICLE_WRITER_USER_PROMPT_FILE",
+        "ARTICLE_CATEGORIES_FILE",
         "EDITOR_JEFE_SYSTEM_PROMPT_FILE",
         "EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE",
         "EDITORIAL_CONTROL_RULES_FILE",
@@ -367,8 +399,9 @@ def test_app_import_loads_required_prompt_env_from_dotenv_before_module_imports(
         assert panel.publicador.ARTICLE_WRITER_SYSTEM_PROMPT == "Writer system override"
         assert (
             panel.publicador.ARTICLE_WRITER_USER_PROMPT_TEMPLATE
-            == "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block"
+            == "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block\n\nCategorías: $categories_list"
         )
+        assert panel.publicador.ARTICLE_CATEGORIES == ["Salud", "Política"]
         assert sys.modules["trh.editorial.editor_jefe_ia"].EDITOR_JEFE_SYSTEM_PROMPT == (
             "Editor jefe override"
         )

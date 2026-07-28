@@ -36,6 +36,7 @@ from trh.editorial.editor_jefe_ia import (
 from trh.editorial.editorial_control import generate_article_with_editorial_control
 from trh.infrastructure.html_sanitizer import sanitize_article_markup
 from trh.publication import publicador, publicapress
+from trh.publication.publicador import ARTICLE_CATEGORIES
 
 app = Flask(
     __name__,
@@ -1346,6 +1347,7 @@ def preview_articulo(cluster_id):
         cluster=cluster,
         contenido_ia=contenido_ia,
         noticias=noticias,
+        categories=ARTICLE_CATEGORIES,
         ahora=datetime.now()
     )
 

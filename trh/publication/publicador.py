@@ -27,7 +27,7 @@ from datetime import datetime
 from psycopg2.extras import RealDictCursor
 
 from trh.infrastructure.env_loader import load_project_env
-from trh.infrastructure.prompt_loader import load_prompt_text
+from trh.infrastructure.prompt_loader import load_json_file, load_prompt_text
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -58,7 +58,30 @@ ARTICLE_WRITER_SYSTEM_PROMPT = load_prompt_text(
 REQUIRED_ARTICLE_WRITER_TEMPLATE_PLACEHOLDERS = {
     'sources_block',
     'editorial_guidance_block',
+    'categories_list',
 }
+
+
+def _validate_article_categories(value):
+    if not isinstance(value, dict):
+        raise ValueError("categories file must be a JSON object")
+
+    categories = value.get("categories")
+    if not isinstance(categories, list) or len(categories) == 0:
+        raise ValueError("categories file must contain a non-empty list of strings")
+
+    if not all(isinstance(cat, str) and cat for cat in categories):
+        raise ValueError("all categories must be non-empty strings")
+
+    return categories
+
+
+ARTICLE_CATEGORIES = load_json_file(
+    'ARTICLE_CATEGORIES_FILE',
+    logger,
+    _validate_article_categories,
+)
+ARTICLE_CATEGORIES_LIST = ", ".join(ARTICLE_CATEGORIES)
 
 
 def _extract_template_placeholders(template_text):
@@ -205,6 +228,7 @@ def construir_prompt(noticias, nota_ia=''):
     return prompt_template.safe_substitute(
         sources_block=_build_article_sources_block(noticias),
         editorial_guidance_block=_build_editorial_guidance_block(nota_ia),
+        categories_list=ARTICLE_CATEGORIES_LIST,
     )
 
 
