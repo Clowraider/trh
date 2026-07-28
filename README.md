@@ -1,95 +1,137 @@
 # TRH Panel
 
-Pipeline para extraer noticias, procesarlas con embeddings/clustering, asistir edición en panel y publicar con IA.
+Pipeline para extraer noticias, agruparlas por similitud, asistir la revisión editorial en un panel web y publicar artículos con IA en WordPress.
 
-## ¿Para qué sirve?
-
-1. Crawlers: buscan links y extraen noticias.
-2. Embeddings: vectorizan contenido para similitud.
-3. Clusters: agrupan noticias relacionadas.
-4. Keywords: extraen palabras clave.
-5. Panel: revisión editorial manual.
-6. IA: genera artículo del cluster elegido.
-7. Publicación: envía a WordPress.
+> **Guía para operadores y editores.** Si vas a desarrollar o mantener el código, empezá por [`docs/repo-layout.md`](docs/repo-layout.md).
 
 ---
 
-## Requisitos
+## ¿Qué hace TRH en una frase?
 
-- Python **3.11**
-- PostgreSQL
-- Extensión **pgvector** (obligatoria para embeddings/similitud)
-- Dependencias Python de `requirements.txt`
-
-> Sin `pgvector`, se degrada el flujo de embeddings y búsqueda de artículos similares.
+Recoge noticias de distintos sitios, detecta cuáles hablan del mismo tema, les saca palabras clave, presenta esos grupos en un panel para que un editor elija y, desde ahí, genera un artículo unificado con IA y lo publica en WordPress.
 
 ---
 
-## Instalación desde cero
+## Flujo de datos completo
 
-### Instalación rápida
+Este es el camino que recorre una noticia desde que aparece en un sitio fuente hasta que se convierte en un artículo publicado.
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   Sitios web    │────▶│   Crawlers      │────▶│   noticias_     │
+│   de fuentes    │     │   (uno por      │     │   historico     │
+│                 │     │   fuente)       │     │   (tabla DB)    │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                                                         │
+                                                         ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  clusters_      │◀────│  Clustering     │◀────│  Embeddings     │
+│  editoriales    │     │  (similitud)    │     │  (vectoriza)    │
+│  (tabla DB)     │     │                 │     │                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │
+        ▼
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Keywords /     │────▶│  Panel web      │────▶│  Artículo con   │
+│  entidades      │     │  (app.py)       │     │  IA             │
+│                 │     │                 │     │                 │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+                                                         │
+                                                         ▼
+                                                ┌─────────────────┐
+                                                │  WordPress      │
+                                                │  (publicación)  │
+                                                └─────────────────┘
+```
+
+### Pasos en orden
+
+1. **Crawlers** (`crawler/sites/*_crawler.py`) — Entran a cada sitio fuente, extraen títulos, texto, fecha, imagen y guardan todo en `noticias_historico`.
+2. **Embeddings** (`pipeline/embedding_archivo.py`) — Convierte el contenido de cada noticia en un vector numérico y lo guarda en una columna `pgvector`.
+3. **Clustering** (`pipeline/cluster_noticias.py`) — Compara vectores y agrupa noticias que tratan el mismo tema en un solo registro de `clusters_editoriales`.
+4. **Keywords y entidades** (`pipeline/extraer_keywords_ner.py`) — Detecta personas, organizaciones, lugares y frases clave del grupo.
+5. **Selección** (`pipeline/seleccionar_publicables.py`) — Decide qué clusters son candidatos a publicar según reglas de ventana de tiempo y penalización.
+6. **Panel editorial** (`app.py`) — El editor revisa, elige, edita y aprueba.
+7. **Generación con IA** (`trh/publication/publicador.py`) — Escribe un artículo unificado con título, resumen, cuerpo y categoría.
+8. **Publicación** (`trh/publication/publicapress.py`) — Sube el artículo, imágenes y categoría a WordPress.
+
+> Para ver el detalle del orquestador que une las primeras etapas, leé [`docs/proceso.md`](docs/proceso.md).
+
+---
+
+## Estados de un cluster
+
+Un cluster pasa por estos estados a medida que avanza el flujo:
+
+```
+      ┌─────────────┐
+      │   NUEVO     │  (creado por cluster_noticias.py)
+      └──────┬──────┘
+             │
+             ▼
+      ┌─────────────┐
+      │  PENDIENTE  │  (listo para revisión editorial)
+      └──────┬──────┘
+             │
+      ┌──────┴──────┐
+      │             │
+      ▼             ▼
+┌─────────┐   ┌─────────────┐
+│GENERADO │   │   RECHAZADO │
+│  (IA)   │   │  (descartado)│
+└────┬────┘   └─────────────┘
+     │
+     ▼
+┌─────────────┐
+│  PUBLICADO  │  (ya en WordPress)
+└─────────────┘
+```
+
+- **NUEVO**: recién creado por el clustering.
+- **PENDIENTE**: candidato a revisión. El editor lo ve en el panel.
+- **GENERADO**: se generó un borrador con IA. El editor puede editar y publicar.
+- **RECHAZADO**: el editor decidió descartarlo.
+- **PUBLICADO**: ya fue enviado a WordPress.
+
+---
+
+## Instalación oficial
+
+La forma oficial de instalar es con el script remoto:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Clowraider/trh/main/install.sh | sh
 ```
 
-Para pasar opciones al instalador interno:
+Para ver qué haría sin tocar nada:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Clowraider/trh/main/install.sh | sh -s -- --dry-run
 ```
 
-### Requisitos y preparación
+### Requisitos previos
 
-Antes de correr el instalador, asegurate de esto:
+Antes de correr el instalador:
 
-- **PostgreSQL disponible**: la app necesita PostgreSQL y la extensión `pgvector` para embeddings y similitud.
-- **Usuario normal, no root**: ejecutá el instalador con una cuenta común. `scripts/install.sh` usa `sudo` solo cuando hace falta para paquetes del sistema.
-- **OpenRouter con saldo**: necesitás una API key válida y con crédito disponible para que funcionen las integraciones del proyecto.
-- **WordPress listo para integración**: vas a necesitar la URL del sitio, el usuario y una **Application Password** de WordPress.
-- **Modelo de embeddings local y estable**: definí un modelo local de embeddings en tu idioma.
+- **PostgreSQL con `pgvector`**. Sin esta extensión no funciona la similitud ni el clustering.
+- **Usuario normal**, no root. El script usa `sudo` solo cuando necesita paquetes del sistema.
+- **API key de OpenRouter** con saldo disponible.
+- **WordPress** con URL, usuario y **Application Password** lista.
+- **Modelo de embeddings local y estable**. Preferentemente un modelo local, guardado como artefacto crítico: si cambia el modelo, cambian los vectores y se pierde consistencia histórica.
 
-### Sobre el modelo de embeddings
-
-El modelo de embeddings conviene que sea **local**.
-
-¿Por qué?
-
-- porque **no debe cambiar con el tiempo**;
-- porque si cambia el modelo, cambian los vectores y perdés consistencia histórica;
-- porque el backup del archivo del modelo vale **oro**: guardalo como un artefacto crítico de tu instalación.
-
-1) Crear entorno e instalar dependencias:
+### Instalación manual (si el script no aplica)
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m spacy download es_core_news_md
-```
 
-2) Configurar variables:
-
-```bash
 cp .env.example .env
-# editar .env
-```
+# editar .env con tus credenciales
 
-3) Verificar variables requeridas:
-
-```bash
 ./scripts/check_env.sh
-```
-
-4) Inicializar base de datos:
-
-```bash
 ./scripts/init_db.sh
-```
-
-5) Levantar panel:
-
-```bash
 python3 app.py
 ```
 
@@ -99,51 +141,90 @@ Panel: `http://localhost:5000/`
 
 ## Operación diaria
 
-### Pipeline principal
+### Correr el pipeline
 
-Se ejecuta con:
+El pipeline principal se ejecuta con:
 
 ```bash
 python3 proceso.py
 ```
 
-`proceso.py` hace:
-- Crawlers en paralelo: descubre y ejecuta automáticamente todos los archivos `crawler/sites/*_crawler.py`. Ahí es donde cada instalación agrega sus propios extractores; no van al repo base.
-- Como ejemplo y punto de partida se incluye `crawler/sites/plantilla_crawler.py`. Copialo, renombralo y adaptalo a tu sitio.
-- Luego, secuencial:
-  - `pipeline/embedding_archivo.py`
-  - `pipeline/cluster_noticias.py`
-  - `pipeline/extraer_keywords_ner.py`
+Hace esto en orden:
 
-Incluye locks para evitar ejecuciones solapadas y para permitir una sola corrida en cola.
+1. Ejecuta todos los crawlers en paralelo.
+2. Genera embeddings.
+3. Agrupa en clusters.
+4. Extrae keywords y entidades.
 
-### Panel editorial
+Además gestiona locks para que no se pisen dos ejecuciones, y permite encolar una sola corrida más.
+
+> Ver detalle completo: [`docs/proceso.md`](docs/proceso.md)
+
+### Levantar el panel editorial
 
 ```bash
 python3 app.py
 ```
 
-### Publicación con IA
+Desde el panel el editor puede:
 
-Se realiza desde el flujo del panel sobre el artículo elegido.
+- Ver clusters pendientes.
+- Revisar noticias fuente.
+- Generar un borrador con IA.
+- Editar título, resumen, cuerpo y categoría.
+- Seleccionar fotos principal y secundarias.
+- Guardar cambios.
+- Publicar en WordPress.
 
----
+### Cron sugerido
 
-## Cron sugerido (pipeline)
-
-Ejemplo (ajustar horarios):
+Ejecutar el pipeline cada pocas horas, según la frecuencia de publicación de tus fuentes:
 
 ```cron
 0 7,10,13,16,19,22 * * * cd /ruta/TRH && /ruta/TRH/.venv/bin/python3 proceso.py >> /ruta/TRH/logs/proceso.log 2>&1
 ```
 
+Evitá frecuencias agresivas para no saturar sitios pequeños.
+
+---
+
+## Estructura del repo (para operadores)
+
+| Carpeta / archivo | Qué contiene |
+|---|---|
+| `app.py` | Panel web Flask. |
+| `proceso.py` | Orquestador del pipeline de crawlers → embeddings → clusters → keywords. |
+| `crawler/sites/` | Un archivo por cada sitio fuente. Acá se agregan nuevos medios. |
+| `pipeline/` | Procesamiento de datos: embeddings, clustering, keywords, selección. |
+| `trh/publication/` | Generación de artículos con IA y publicación en WordPress. |
+| `trh/editorial/` | Control editorial y selección asistida por IA. |
+| `prompts/` | Prompts y reglas que usa la IA. |
+| `templates/` | Pantallas del panel. |
+| `scripts/` | Utilidades de entorno, inicialización y wrappers. |
+| `deploy/` | Ejemplos de systemd y nginx. |
+| `docs/` | Documentación del sistema. |
+
+---
+
+## Documentación específica
+
+- [`docs/proceso.md`](docs/proceso.md) — Cómo funciona el pipeline principal (`proceso.py`).
+- [`docs/repo-layout.md`](docs/repo-layout.md) — Cómo está organizado el código (para desarrolladores).
+
+Próximos documentos planificados:
+
+- `docs/cluster_noticias.md` — Cómo agrupa noticias.
+- `docs/embedding_archivo.md` — Cómo se generan los embeddings.
+- `docs/extraer_keywords_ner.md` — Cómo se extraen keywords y entidades.
+- `docs/seleccionar_publicables.md` — Cómo se eligen los clusters publicables.
+- `docs/panel.md` — Flujo del panel editorial.
+- `docs/publicacion.md` — Cómo se genera y publica un artículo.
+
 ---
 
 ## Pruebas
 
-Hay tests en `tests/`.
-
-Ejecución recomendada antes de cambios sensibles:
+Antes de cambios sensibles, corré:
 
 ```bash
 python -m pytest -q
@@ -155,101 +236,53 @@ python -m pytest -q
 
 ### 1) Pipeline con cron
 
-Programar `proceso.py` en horarios definidos (según actualización de fuentes), evitando frecuencia excesiva para no saturar sitios pequeños.
+Programar `proceso.py` en horarios definidos según la frecuencia de tus fuentes.
 
 ### 2) Panel como servicio (`systemd`)
 
-Ejemplo base de unidad:
-
-```ini
-[Unit]
-Description=TRH Panel
-After=network.target
-
-[Service]
-User=TU_USUARIO
-WorkingDirectory=/ruta/TRH
-Environment="PATH=/ruta/TRH/.venv/bin"
-ExecStart=/ruta/TRH/.venv/bin/python app.py
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
+Ejemplo base en `deploy/trh-panel.service`.
 
 ### 3) Reverse proxy (`nginx`)
 
-Recomendado para exponer el panel de forma estable (puerto 80/443) y dejar `app.py` sólo en localhost.
+Recomendado para exponer el panel en 80/443 mientras `app.py` escucha en localhost.
 
-Configuración lista para copiar en `deploy/`:
+Archivos listos para copiar en `deploy/`:
+
 - `deploy/trh-panel.service`
 - `deploy/nginx-trh.conf`
 - `deploy/README.md`
 
 ---
 
-## Extracción de keywords y entidades
-
-Se usa `pipeline/extraer_keywords_ner.py` con enfoque híbrido:
-
-- **YAKE** (`yake`): extracción estadística de frases clave (tipo `keyword`), con `n=2`, deduplicación y top limitado.
-- **spaCy NER** (`spacy` + `es_core_news_md`): detección de entidades para:
-  - `PER` → `persona`
-  - `ORG` → `organizacion`
-  - `LOC` → `lugar`
-
-Además se aplican filtros de ruido:
-- eliminación de términos basura/promocionales;
-- límites por longitud/cantidad;
-- deduplicación por valor normalizado;
-- limpieza periódica de keywords fuera de ventana de análisis.
-
----
-
-## Fotos y marca de agua
-
-En el panel de cluster se puede elegir foto principal/secundarias desde las noticias fuente o subir fotos manuales temporales.
-
-- Las fotos temporales se guardan en `static/uploads/tmp/cluster_<id>/`.
-- Al publicar correctamente en WordPress, esas fotos temporales locales se borran.
-- Las imágenes subidas a WordPress **no se borran**, porque quedan asociadas al post.
-- La marca de agua se configura con variables `WATERMARK_*` en `.env`.
-
----
-
 ## Troubleshooting básico
 
-### 1) Error con embeddings / similitud
-- Verificar que `pgvector` esté instalado en la DB.
+### Error con embeddings / similitud
+
+- Verificar que `pgvector` esté instalado en PostgreSQL.
 - Reejecutar `./scripts/init_db.sh`.
 
-### 2) Fallos por credenciales o variables faltantes
+### Fallos por credenciales o variables faltantes
+
 - Ejecutar `./scripts/check_env.sh`.
 - Confirmar `.env` completo (DB, OpenRouter, WordPress).
 
-### 3) Riesgo de saturar sitios fuente
-- No aumentar agresivamente frecuencia de corridas.
+### El pipeline no corre
+
+- Revisar `logs/proceso.log`.
+- Verificar que no haya un lock viejo atascado (`scripts/` limpia locks si se ejecuta correctamente, pero un corte abrupto puede dejar uno). En ese caso, ver los archivos de lock en `/tmp` o donde esté configurado.
+
+### Saturación de sitios fuente
+
+- No aumentar la frecuencia de `proceso.py` sin necesidad.
 - Mantener horarios razonables y monitorear tiempos/respuestas.
-- Priorizar estabilidad para no consumir ancho de banda de sitios pequeños.
+
+### Problemas de publicación en WordPress
+
+- Verificar `WP_URL`, `WP_USERNAME` y `WP_APP_PASSWORD`.
+- Confirmar que el usuario de WordPress tenga permisos para crear posts y categorías.
+- Revisar logs del panel para ver el error exacto de la API REST.
 
 ---
-
-## Estructura del repo (actual)
-
-- `crawler/`: crawlers por fuente.
-- `pipeline/`: procesamiento (embeddings, clustering, keywords, selección).
-- `deploy/`: archivos sugeridos para systemd/nginx.
-- `scripts/`: utilidades de entorno, inicialización y wrappers ejecutables.
-- `skills/`: skills/protocolos auxiliares del proyecto.
-- raíz (`app.py`, `proceso.py`): orchestration entrypoints.
-- `trh/editorial/`: reusable editorial-selection and editorial-review modules.
-- `trh/publication/`: reusable article-generation and WordPress-publication modules.
-
-> Compatibilidad: los wrappers ejecutables viven en `scripts/` (`scripts/embedding_archivo.py`, `scripts/cluster_noticias.py`, `scripts/extraer_keywords_ner.py`, `scripts/seleccionar_publicables.py`), mientras que otros entrypoints de raíz como `correccion_sur_santiago.py` siguen en su ubicación actual.
-
-## Estructura de esquema
-
-- `estructura.sql`: snapshot actual del esquema (fuente única).
 
 ## Versión
 
