@@ -214,9 +214,7 @@
           <div class="mb-4">
             <label class="form-label text-muted small">CATEGORÍA</label>
             <select class="form-select categoria-badge" id="edit_categoria">
-              {% for cat in
-              ['Salud','Política','Deportes','Cultura','Economía','Sociedad','Turismo','Seguridad','Educación']
-              %}
+              {% for cat in categories %}
               <option
                 value="{{ cat }}"
                 {% if contenido_ia.categoria == cat %}selected{% endif %}

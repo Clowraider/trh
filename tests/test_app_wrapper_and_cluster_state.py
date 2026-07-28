@@ -12,7 +12,7 @@ def _write_required_prompt_files(tmp_path, suffix):
 
     writer_user_prompt = tmp_path / f"article_writer_user_prompt_{suffix}.txt"
     writer_user_prompt.write_text(
-        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block",
+        "Fuentes:\n$sources_block\n\nNota:\n$editorial_guidance_block\n\nCategorías: $categories_list",
         encoding="utf-8",
     )
 
@@ -31,9 +31,16 @@ def _write_required_prompt_files(tmp_path, suffix):
         encoding="utf-8",
     )
 
+    article_categories = tmp_path / f"article_categories_{suffix}.json"
+    article_categories.write_text(
+        json.dumps({"categories": ["Salud", "Política"]}),
+        encoding="utf-8",
+    )
+
     return {
         "ARTICLE_WRITER_SYSTEM_PROMPT_FILE": str(writer_system_prompt),
         "ARTICLE_WRITER_USER_PROMPT_FILE": str(writer_user_prompt),
+        "ARTICLE_CATEGORIES_FILE": str(article_categories),
         "EDITOR_JEFE_SYSTEM_PROMPT_FILE": str(editor_jefe_prompt),
         "EDITORIAL_CONTROL_SYSTEM_PROMPT_FILE": str(editorial_control_prompt),
         "EDITORIAL_CONTROL_RULES_FILE": str(editorial_rules),

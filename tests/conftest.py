@@ -13,6 +13,10 @@ os.environ.setdefault(
     str(PROJECT_ROOT / "prompts/article_writer_user_prompt.txt"),
 )
 os.environ.setdefault(
+    "ARTICLE_CATEGORIES_FILE",
+    str(PROJECT_ROOT / "prompts/article_categories.json"),
+)
+os.environ.setdefault(
     "EDITOR_JEFE_SYSTEM_PROMPT_FILE",
     str(PROJECT_ROOT / "prompts/editor_jefe_system_prompt.txt"),
 )

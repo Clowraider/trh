@@ -34,7 +34,7 @@ Genera la respuesta EXACTAMENTE en este formato JSON:
   "titulo": "Título atractivo, periodístico y preciso",
   "resumen": "Lead de máximo 280 caracteres",
   "articulo": "Cuerpo completo de la noticia bien estructurado en párrafos",
-  "categoria": "Una sola categoría de esta lista: Salud, Política, Deportes, Cultura, Economía, Sociedad, Turismo, Seguridad, Educación"
+  "categoria": "Una sola categoría de esta lista: $categories_list"
 }
 
 No agregues ningún texto fuera del JSON.$editorial_guidance_block
