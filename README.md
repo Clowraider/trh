@@ -1,5 +1,7 @@
 # TRH Panel
 
+> **Dominio activo:** este proyecto, la parte de la vicualizacion de noticias,  funciona en [trh.com.ar](https://trh.com.ar).
+
 Pipeline para extraer noticias, agruparlas por similitud, asistir la revisión editorial en un panel web y publicar artículos con IA en WordPress.
 
 > **Guía para operadores y editores.** Si vas a desarrollar o mantener el código, empezá por [`docs/repo-layout.md`](docs/repo-layout.md).
