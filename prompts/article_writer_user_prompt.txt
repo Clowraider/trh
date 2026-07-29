@@ -1,32 +1,50 @@
 Genera un artículo unificado basado SOLO en la información de las siguientes fuentes:
 
 $sources_block
-INSTRUCCIONES IMPORTANTES:
-- Usa ÚNICAMENTE la información presente en las fuentes proporcionadas.
-- NO inventes datos, números, nombres, hechos ni conclusiones que no estén explícitamente en las noticias.
+
+INSTRUCCIONES FUNDAMENTALES:
+- Usa EXCLUSIVAMENTE la información presente en las fuentes proporcionadas.
+- NO inventes datos, números, nombres, citas, hechos, causas, consecuencias ni conclusiones no respaldadas por las fuentes.
+- Tu objetivo es producir una nota periodística coherente, sólida y verosímil, escrita con criterio profesional y pensada para lectores de Termas de Río Hondo y zonas cercanas.
 
 RESOLUCIÓN DE IDENTIDAD Y HECHOS:
-- Antes de redactar, unifica entidades y hechos equivalentes entre fuentes.
-- Si dos fuentes describen el mismo hecho/persona con diferencias menores (ej: fecha 30 vs 31, edad 84 vs 85), trátalo como UN solo caso, no como casos distintos.
-- No infieras múltiples víctimas/protagonistas por variaciones menores de edad, fecha u hora.
-- Solo separa en hechos/personas distintas si hay evidencia clara de que sean eventos diferentes.
+- Antes de redactar, unifica entidades, protagonistas y hechos equivalentes entre fuentes.
+- Si dos fuentes describen el mismo hecho o persona con diferencias menores (por ejemplo edad, fecha, hora o detalles secundarios), trátalo como un solo caso.
+- No conviertas variaciones menores en casos distintos.
+- Solo separa hechos o personas si hay evidencia clara de que se trata de eventos diferentes.
 
 MANEJO DE CONTRADICCIONES:
-- Prioriza el dato respaldado por más fuentes.
-- Si hay empate o no se puede resolver, expresa incertidumbre de forma neutral (ej: "84/85 años", "entre el 30 y el 31").
-- Cuando exista contradicción, expresa la incertidumbre de forma neutral sin duplicar el caso. En toda la salida, no nombres fuentes ni medios en el título, el resumen o el artículo.
+- Prioriza la versión mejor respaldada por el conjunto de fuentes.
+- Si una contradicción no puede resolverse con seguridad, exprésala de forma neutral y periodística.
+- Cuando haya versiones distintas, no inventes una síntesis falsa para “cerrar” la historia.
+- No menciones medios ni atribuciones dentro del título, resumen o artículo, salvo que sea indispensable para entender el hecho.
 
-CONSISTENCIA TEMPORAL:
-- Normaliza referencias temporales ambiguas (ej: "ayer", "anoche") al contexto del hecho cuando sea posible.
-- Si no es posible fijar una fecha única, usa una ventana temporal neutral.
+ENFOQUE EDITORIAL:
+- Si no existe guía editorial adicional, redacta con enfoque neutral, factual, no acusatorio y no panfletario.
+- Prioriza lo que resulte más relevante o útil para la audiencia local de Termas de Río Hondo y áreas cercanas.
+- Si existe una guía editorial adicional, aplícala como criterio de jerarquización, énfasis, encuadre, selección y recorte.
+- La guía editorial puede pedir un enfoque más favorable, más crítico o más partidario.
+- Si la guía editorial pide restar relevancia a un hecho, omitir aspectos negativos o concentrarse en aspectos positivos, hacelo SOLO sobre información efectivamente presente en las fuentes.
+- Podés omitir detalles secundarios o bajar protagonismo, pero no omitas el hecho central si constituye el núcleo informativo de la noticia.
+- La guía editorial adicional NUNCA autoriza inventar hechos ni afirmar algo que las fuentes no sostienen.
+- Aunque el enfoque editorial cambie, evitá acusaciones no respaldadas explícitamente por el material disponible.
+- Evitá marcos militantes, activistas o propagandísticos salvo que una guía editorial explícita lo pida y los hechos lo sostengan.
+
+CONSISTENCIA TEMPORAL Y NARRATIVA:
+- Normaliza referencias ambiguas como “ayer”, “anoche” o “esta mañana” cuando sea posible.
+- Si no se puede fijar una única referencia temporal con seguridad, usá una formulación neutral.
+- Ordena la nota de forma clara, priorizando lo más importante según el enfoque editorial definido.
 
 CALIDAD DE SALIDA:
-- Escribe en español neutro de Argentina, claro, profesional y objetivo.
-- Une la información de forma coherente y natural.
-- Antes de responder, verifica internamente:
-  1) que no duplicaste protagonistas,
-  2) que no hay números incompatibles sin aclaración,
-  3) que cada afirmación relevante está sustentada por al menos una fuente.
+- Escribe en español periodístico, natural, claro y profesional.
+- El título debe ser preciso y verosímil.
+- El resumen debe funcionar como lead informativo breve.
+- El artículo debe tener buena fluidez, buena jerarquía informativa y párrafos claros.
+- Antes de responder, verificá internamente:
+  1) que no inventaste información,
+  2) que no duplicaste protagonistas o hechos,
+  3) que no ocultaste contradicciones relevantes inventando una falsa certeza,
+  4) que el enfoque editorial aplicado sigue siendo compatible con las fuentes.
 
 Genera la respuesta EXACTAMENTE en este formato JSON:
 
