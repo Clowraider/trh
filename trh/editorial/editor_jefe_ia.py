@@ -314,33 +314,30 @@ class OpenRouterSelectionClient:
             "X-Title": "TRH Editor Jefe IA",
         }
         for model in self.models:
-            for attempt in range(1, 3):
-                try:
-                    response = self.post(
-                        self.url, headers=headers,
-                        json={"model": model, "messages": [
-                            {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
-                            {"role": "user", "content": payload},
-                        ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
-                              "response_format": {"type": "json_object"}}, timeout=70,
-                    )
-                    if response.status_code == 429:
-                        logger.warning(
-                            "editor_jefe.provider_rate_limit model=%s attempt=%s",
-                            model, attempt,
-                        )
-                        self.sleep(2 * attempt)
-                        continue
-                    response.raise_for_status()
-                    content = response.json()["choices"][0]["message"]["content"]
-                    return json.loads(content.strip())
-                except (IndexError, KeyError, TypeError, ValueError,
-                        requests.RequestException):
+            try:
+                response = self.post(
+                    self.url, headers=headers,
+                    json={"model": model, "messages": [
+                        {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
+                        {"role": "user", "content": payload},
+                    ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
+                          "response_format": {"type": "json_object"}}, timeout=70,
+                )
+                if response.status_code == 429:
                     logger.warning(
-                        "editor_jefe.provider_attempt_failed model=%s attempt=%s",
-                        model, attempt,
+                        "editor_jefe.provider_rate_limit model=%s",
+                        model,
                     )
-                    self.sleep(2 * attempt)
+                    continue
+                response.raise_for_status()
+                content = response.json()["choices"][0]["message"]["content"]
+                return json.loads(content.strip())
+            except (IndexError, KeyError, TypeError, ValueError,
+                    requests.RequestException):
+                logger.warning(
+                    "editor_jefe.provider_attempt_failed model=%s",
+                    model,
+                )
         raise _failure("provider_failure", "Selection provider unavailable")
 
 

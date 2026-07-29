@@ -250,55 +250,49 @@ def llamar_ia_json(prompt, system_prompt, max_tokens=2200, temperature=0.6, titl
     models = [MODEL_PRINCIPAL, MODEL_FALLBACK]
 
     for modelo in models:
-        for intento in range(1, 3):
-            try:
-                headers = {
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://trh.local",
-                    "X-Title": title
-                }
+        try:
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://trh.local",
+                "X-Title": title
+            }
 
-                data = {
-                    "model": modelo,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                    "response_format": {"type": "json_object"}
-                }
+            data = {
+                "model": modelo,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "response_format": {"type": "json_object"}
+            }
 
-                response = requests.post(
-                    OPENROUTER_URL,
-                    headers=headers,
-                    json=data,
-                    timeout=70
-                )
+            response = requests.post(
+                OPENROUTER_URL,
+                headers=headers,
+                json=data,
+                timeout=70
+            )
 
-                if response.status_code == 429:
-                    logger.warning("Cuota excedida en %s (intento %s)", modelo, intento)
-                    time.sleep(2 * intento)
-                    continue
+            if response.status_code == 429:
+                logger.warning("Cuota excedida en %s", modelo)
+                continue
 
-                response.raise_for_status()
-                result = response.json()
-                contenido = result['choices'][0]['message']['content'].strip()
-                return json.loads(contenido)
+            response.raise_for_status()
+            result = response.json()
+            contenido = result['choices'][0]['message']['content'].strip()
+            return json.loads(contenido)
 
-            except (requests.Timeout, requests.ConnectionError) as e:
-                logger.warning("Error de red con %s (intento %s): %s", modelo, intento, e)
-                time.sleep(2 * intento)
-            except json.JSONDecodeError:
-                logger.warning("La IA no devolvió JSON válido con %s (intento %s)", modelo, intento)
-                time.sleep(2 * intento)
-            except ValueError as e:
-                logger.warning("Respuesta inválida con %s (intento %s): %s", modelo, intento, e)
-                time.sleep(2 * intento)
-            except Exception as e:
-                logger.warning("Error con modelo %s (intento %s): %s", modelo, intento, e)
-                time.sleep(2 * intento)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            logger.warning("Error de red con %s: %s", modelo, e)
+        except json.JSONDecodeError:
+            logger.warning("La IA no devolvió JSON válido con %s", modelo)
+        except ValueError as e:
+            logger.warning("Respuesta inválida con %s: %s", modelo, e)
+        except Exception as e:
+            logger.warning("Error con modelo %s: %s", modelo, e)
 
     raise Exception("Todos los modelos de IA fallaron")
 

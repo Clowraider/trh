@@ -159,7 +159,7 @@ def test_openrouter_client_uses_publicador_transport_policy():
     assert calls[-1] == "raise_for_status"
 
 
-def test_openrouter_retries_each_model_with_429_and_network_backoff():
+def test_openrouter_skips_to_next_model_after_429_without_retry():
     calls, sleeps = [], []
 
     class Response:
@@ -171,8 +171,7 @@ def test_openrouter_retries_each_model_with_429_and_network_backoff():
         def json(self):
             return {"choices": [{"message": {"content": self.content}}]}
 
-    outcomes = [Response(429), Response(429), feature.requests.ConnectionError("down"),
-                Response(200, '{"selections":[]}')]
+    outcomes = [Response(429), Response(200, '{"selections":[]}')]
     def post(_url, **kwargs):
         calls.append(kwargs["json"]["model"])
         outcome = outcomes.pop(0)
@@ -184,11 +183,11 @@ def test_openrouter_retries_each_model_with_429_and_network_backoff():
         post=post, api_key="secret", models=("one", "two"), sleep=sleeps.append
     )
     assert client.select("{}") == {"selections": []}
-    assert calls == ["one", "one", "two", "two"]
-    assert sleeps == [2, 4, 2]
+    assert calls == ["one", "two"]
+    assert sleeps == []
 
 
-def test_openrouter_retries_http_and_malformed_json_before_fallback_success():
+def test_openrouter_falls_back_after_http_or_malformed_json():
     calls, sleeps = [], []
 
     class Response:
@@ -202,8 +201,7 @@ def test_openrouter_retries_http_and_malformed_json_before_fallback_success():
                 return {"choices": [{"message": {"content": "not-json"}}]}
             return {"choices": [{"message": {"content": self.content}}]}
 
-    outcomes = [Response(500), Response(content="malformed"),
-                Response(content='{"selections":[]}')]
+    outcomes = [Response(500), Response(content='{"selections":[]}')]
     def post(_url, **kwargs):
         calls.append(kwargs["json"]["model"])
         return outcomes.pop(0)
@@ -212,8 +210,8 @@ def test_openrouter_retries_http_and_malformed_json_before_fallback_success():
         post=post, api_key="secret", models=("one", "two"), sleep=sleeps.append
     )
     assert client.select("{}") == {"selections": []}
-    assert calls == ["one", "one", "two"]
-    assert sleeps == [2, 4]
+    assert calls == ["one", "two"]
+    assert sleeps == []
 
 
 def test_openrouter_missing_choice_fails_as_generic_feature_error():
