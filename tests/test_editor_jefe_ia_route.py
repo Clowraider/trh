@@ -98,8 +98,95 @@ def test_requested_number_limits_total_input_and_splits_batches_of_five():
         [5, 6],
     ]
     assert [payload["batch_size"] for payload in payloads] == [5, 2]
-    assert [item["cluster_id"] for item in result] == [4, 6]
-    assert [item["reason"] for item in result] == ["Relevant 4", "Relevant 6"]
+    assert [item["cluster_id"] for item in result.selections] == [4, 6]
+    assert [item["reason"] for item in result.selections] == ["Relevant 4", "Relevant 6"]
+    assert (result.total_batches, result.failed_batches) == (2, 0)
+
+
+@pytest.mark.parametrize("requested_number", [10, 15])
+def test_all_batches_pass_for_large_requested_numbers(requested_number):
+    candidates = [candidate(cluster_id=index) for index in range(requested_number + 2)]
+    payloads = []
+
+    class Client:
+        def select(self, payload):
+            parsed = json.loads(payload)
+            payloads.append(parsed)
+            return {"selections": [{
+                "cluster_id": parsed["candidates"][0]["cluster_id"],
+                "reason": "Relevant",
+            }]}
+
+    result = feature.select_recommendations(candidates, requested_number, Client())
+
+    assert len(payloads) == requested_number // 5
+    assert all(len(payload["candidates"]) == 5 for payload in payloads)
+    assert [item["cluster_id"] for item in result.selections] == list(
+        range(0, requested_number, 5)
+    )
+    assert (result.total_batches, result.failed_batches) == (
+        requested_number // 5,
+        0,
+    )
+
+
+def test_failed_middle_batch_preserves_earlier_and_later_successes(caplog):
+    candidates = [candidate(cluster_id=index) for index in range(15)]
+    calls = 0
+
+    class Client:
+        def select(self, payload):
+            nonlocal calls
+            calls += 1
+            parsed = json.loads(payload)
+            if calls == 2:
+                raise feature.FeatureError("sensitive provider detail", "provider_failure")
+            cluster_id = parsed["candidates"][0]["cluster_id"]
+            return {"selections": [{"cluster_id": cluster_id, "reason": "Relevant"}]}
+
+    with caplog.at_level("INFO", logger=feature.__name__):
+        result = feature.select_recommendations(candidates, 15, Client())
+
+    assert calls == 3
+    assert [item["cluster_id"] for item in result.selections] == [0, 10]
+    assert (result.total_batches, result.failed_batches) == (3, 1)
+    assert "batch_index=2 batch_count=3 batch_size=5" in caplog.text
+    assert "sensitive provider detail" not in caplog.text
+
+
+def test_all_failed_batches_return_failure_metadata_not_zero():
+    candidates = [candidate(cluster_id=index) for index in range(10)]
+
+    class Client:
+        def select(self, _payload):
+            raise feature.FeatureError("provider failed", "provider_failure")
+
+    result = feature.select_recommendations(candidates, 10, Client())
+
+    assert result.selections == []
+    assert (result.total_batches, result.failed_batches) == (2, 2)
+
+
+def test_missing_provider_configuration_fails_fast_across_batches(caplog):
+    post_calls = []
+    client = feature.OpenRouterSelectionClient(
+        post=lambda *_args, **_kwargs: post_calls.append("called"),
+        api_key="",
+        models=("safe-model",),
+    )
+
+    with caplog.at_level("WARNING", logger=feature.__name__):
+        result = feature.select_recommendations(
+            [candidate(cluster_id=index) for index in range(15)],
+            15,
+            client,
+        )
+
+    assert post_calls == []
+    assert result.selections == []
+    assert (result.total_batches, result.failed_batches) == (3, 3)
+    assert caplog.text.count("provider_configuration_failure") == 1
+    assert "model=safe-model error_category=configuration http_status=none" in caplog.text
 
 
 @pytest.mark.parametrize("body", [
@@ -212,6 +299,68 @@ def test_openrouter_falls_back_after_http_or_malformed_json():
     assert client.select("{}") == {"selections": []}
     assert calls == ["one", "two"]
     assert sleeps == []
+
+
+def test_provider_and_validation_logs_are_structured_and_secret_safe(caplog):
+    secret = "api-key-never-log"
+    raw_response = "raw-model-response-never-log"
+
+    class Response:
+        status_code = 503
+
+        def raise_for_status(self):
+            error = feature.requests.HTTPError("provider exception secret")
+            error.response = self
+            raise error
+
+        def json(self):
+            return {"raw": raw_response}
+
+    client = feature.OpenRouterSelectionClient(
+        post=lambda *_args, **_kwargs: Response(),
+        api_key=secret,
+        models=("safe-model",),
+    )
+    with caplog.at_level("WARNING", logger=feature.__name__):
+        with pytest.raises(feature.FeatureError):
+            client.select('{"prompt":"payload-never-log"}')
+        with pytest.raises(feature.FeatureError):
+            feature.validate_selection_response(
+                {"selections": [{"cluster_id": 999, "reason": "unknown"}]},
+                [candidate()],
+                1,
+            )
+
+    assert "model=safe-model error_category=http_error http_status=503" in caplog.text
+    assert "validation_failure reason=cluster_id" in caplog.text
+    for forbidden in (secret, raw_response, "provider exception secret", "payload-never-log"):
+        assert forbidden not in caplog.text
+
+
+@pytest.mark.parametrize(("reason", "expected_category", "sensitive_content"), [
+    ("   ", "reason_empty", "selections"),
+    ("sensitive-too-long-" + "x" * 240, "reason_too_long", "sensitive-too-long"),
+    (
+        "sensitive-control\x00character",
+        "reason_control_character",
+        "sensitive-control",
+    ),
+])
+def test_invalid_reason_logs_exact_safe_category_without_content(
+    caplog, reason, expected_category, sensitive_content
+):
+    body = {"selections": [{"cluster_id": 1, "reason": reason}]}
+
+    with caplog.at_level("WARNING", logger=feature.__name__):
+        with pytest.raises(feature.FeatureError):
+            feature.validate_selection_response(body, [candidate()], 1)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [
+        f"editor_jefe.validation_failure reason={expected_category}"
+    ]
+    assert sensitive_content not in caplog.text
+    assert reason not in caplog.text
 
 
 def test_openrouter_missing_choice_fails_as_generic_feature_error():
@@ -494,6 +643,74 @@ def test_route_batches_requested_candidates_in_groups_of_five_and_keeps_total_ca
     assert b"Batch 1" in response.data
     assert b"Batch 2" in response.data
     assert b"Cluster 8" not in response.data
+
+
+def test_route_saves_and_displays_partial_batch_results_with_warning():
+    import app as panel
+
+    saved = []
+    calls = 0
+    candidates = [candidate(cluster_id=index, editorial_score=80) for index in range(15)]
+
+    class Client:
+        def select(self, payload):
+            nonlocal calls
+            calls += 1
+            parsed = json.loads(payload)
+            if calls == 2:
+                raise feature.FeatureError("private detail", "validation_failure")
+            cluster_id = parsed["candidates"][0]["cluster_id"]
+            return {"selections": [{
+                "cluster_id": cluster_id,
+                "reason": f"Success {cluster_id}",
+            }]}
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: candidates,
+        EDITOR_JEFE_CONNECTION_FACTORY=object(),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
+        EDITOR_JEFE_SAVE_RECOMMENDATIONS=lambda _factory, selections: saved.extend(selections),
+    )
+
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "15", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+
+    assert response.status_code == 200
+    assert calls == 3
+    assert [item["cluster_id"] for item in saved] == [0, 10]
+    assert b"Success 0" in response.data and b"Success 10" in response.data
+    assert b"resultado parcial" in response.data
+
+
+def test_route_renders_retryable_error_when_all_attempted_batches_fail():
+    import app as panel
+
+    saved = []
+    candidates = [candidate(cluster_id=index, editorial_score=80) for index in range(10)]
+
+    class Client:
+        def select(self, _payload):
+            raise feature.FeatureError("private detail", "provider_failure")
+
+    configure_panel(
+        panel,
+        EDITOR_JEFE_CONTEXT_BUILDER=lambda *_: candidates,
+        EDITOR_JEFE_CONNECTION_FACTORY=object(),
+        EDITOR_JEFE_CLIENT_FACTORY=lambda: Client(),
+        EDITOR_JEFE_SAVE_RECOMMENDATIONS=lambda _factory, selections: saved.extend(selections),
+    )
+
+    response = panel.app.test_client().post(
+        "/editor-jefe-ia",
+        data={"maximum": "10", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
+    )
+
+    assert b"No se pudo completar la recomendaci" in response.data
+    assert b"resultado v\xc3\xa1lido" not in response.data
+    assert saved == []
 
 
 def test_single_cluster_generation_route_updates_note_and_reuses_generator(monkeypatch):
@@ -1344,7 +1561,7 @@ def test_failure_observability_uses_safe_categories_only(caplog):
         )
     log_text = " ".join(record.getMessage() for record in caplog.records)
     assert all(name in log_text for name in ("payload_failure", "validation_failure",
-        "provider_failure", "context_failure"))
+        "provider_attempt_failed", "context_failure"))
     assert all(secret not in log_text for secret in ("secret prompt", "raw", "secret-key",
         "sensitive provider", "sensitive context"))
 

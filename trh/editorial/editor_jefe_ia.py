@@ -6,6 +6,7 @@ import os
 import re
 import time
 import unicodedata
+from dataclasses import dataclass
 
 import requests
 
@@ -264,28 +265,33 @@ def serialize_selection_payload(candidates, batch_size):
 
 
 def validate_selection_response(body, candidates, maximum):
-    def invalid():
-        return _failure("validation_failure", "Invalid selection response")
+    def invalid(reason):
+        logger.warning("editor_jefe.validation_failure reason=%s", reason)
+        return FeatureError("Invalid selection response", "validation_failure")
 
     if not isinstance(body, dict) or set(body) != {"selections"}:
-        raise invalid()
+        raise invalid("top_level_schema")
     selections = body["selections"]
     if not isinstance(selections, list) or len(selections) > min(maximum, len(candidates)):
-        raise invalid()
+        raise invalid("selection_count")
     eligible = {item["cluster_id"]: item for item in candidates}
     reasons = {}
     for selection in selections:
         if not isinstance(selection, dict) or set(selection) != {"cluster_id", "reason"}:
-            raise invalid()
+            raise invalid("selection_schema")
         cluster_id, reason = selection["cluster_id"], selection["reason"]
         if (isinstance(cluster_id, bool) or not isinstance(cluster_id, int)
-                or cluster_id not in eligible or cluster_id in reasons
-                or not isinstance(reason, str)):
-            raise invalid()
+                or cluster_id not in eligible or cluster_id in reasons):
+            raise invalid("cluster_id")
+        if not isinstance(reason, str):
+            raise invalid("reason_type")
         reason = reason.strip()
-        if (not reason or len(reason) > 240
-                or any(unicodedata.category(char) == "Cc" for char in reason)):
-            raise invalid()
+        if not reason:
+            raise invalid("reason_empty")
+        if len(reason) > 240:
+            raise invalid("reason_too_long")
+        if any(unicodedata.category(char) == "Cc" for char in reason):
+            raise invalid("reason_control_character")
         reasons[cluster_id] = reason
     return [{**item, "reason": reasons[item["cluster_id"]]}
             for item in candidates if item["cluster_id"] in reasons]
@@ -306,7 +312,14 @@ class OpenRouterSelectionClient:
 
     def select(self, payload):
         if not self.api_key:
-            raise _failure("provider_failure", "Selection provider unavailable")
+            logger.warning(
+                "editor_jefe.provider_unavailable model=%s "
+                "error_category=configuration http_status=none",
+                self.models[0] if self.models else "none",
+            )
+            raise FeatureError(
+                "Selection provider unavailable", "provider_configuration_failure"
+            )
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
@@ -314,6 +327,7 @@ class OpenRouterSelectionClient:
             "X-Title": "TRH Editor Jefe IA",
         }
         for model in self.models:
+            response = None
             try:
                 response = self.post(
                     self.url, headers=headers,
@@ -325,20 +339,34 @@ class OpenRouterSelectionClient:
                 )
                 if response.status_code == 429:
                     logger.warning(
-                        "editor_jefe.provider_rate_limit model=%s",
-                        model,
+                        "editor_jefe.provider_attempt_failed model=%s "
+                        "error_category=rate_limit http_status=429", model,
                     )
                     continue
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
                 return json.loads(content.strip())
-            except (IndexError, KeyError, TypeError, ValueError,
-                    requests.RequestException):
+            except requests.RequestException as error:
+                error_response = getattr(error, "response", None)
+                status_source = response if response is not None else error_response
+                http_status = getattr(status_source, "status_code", None)
                 logger.warning(
-                    "editor_jefe.provider_attempt_failed model=%s",
-                    model,
+                    "editor_jefe.provider_attempt_failed model=%s "
+                    "error_category=http_error http_status=%s", model, http_status,
                 )
-        raise _failure("provider_failure", "Selection provider unavailable")
+            except ValueError:
+                logger.warning(
+                    "editor_jefe.provider_attempt_failed model=%s "
+                    "error_category=malformed_response http_status=%s",
+                    model, getattr(response, "status_code", None),
+                )
+            except (IndexError, KeyError, TypeError):
+                logger.warning(
+                    "editor_jefe.provider_attempt_failed model=%s "
+                    "error_category=response_schema http_status=%s",
+                    model, getattr(response, "status_code", None),
+                )
+        raise FeatureError("Selection provider unavailable", "provider_failure")
 
 
 def load_saved_recommendations(connection_factory):
@@ -386,14 +414,55 @@ def delete_saved_recommendation(connection_factory, cluster_id):
         conn.close()
 
 
+@dataclass(frozen=True)
+class SelectionOutcome:
+    selections: list
+    total_batches: int
+    failed_batches: int
+    failure_codes: tuple = ()
+
+
 def select_recommendations(candidates, batch_size, client):
     selections = []
+    failure_codes = []
     limited_candidates = candidates[:batch_size]
-    for index in range(0, len(limited_candidates), SELECTION_BATCH_LIMIT):
-        batch = limited_candidates[index:index + SELECTION_BATCH_LIMIT]
+    batches = [
+        limited_candidates[index:index + SELECTION_BATCH_LIMIT]
+        for index in range(0, len(limited_candidates), SELECTION_BATCH_LIMIT)
+    ]
+    total_batches = len(batches)
+    for batch_index, batch in enumerate(batches, start=1):
         batch_maximum = len(batch)
-        payload = serialize_selection_payload(batch, batch_maximum)
-        selections.extend(
-            validate_selection_response(client.select(payload), batch, batch_maximum)
+        logger.info(
+            "editor_jefe.batch_started batch_index=%s batch_count=%s batch_size=%s",
+            batch_index, total_batches, batch_maximum,
         )
-    return selections
+        try:
+            payload = serialize_selection_payload(batch, batch_maximum)
+            batch_selections = validate_selection_response(
+                client.select(payload), batch, batch_maximum
+            )
+            selections.extend(batch_selections)
+            logger.info(
+                "editor_jefe.batch_completed batch_index=%s batch_count=%s "
+                "batch_size=%s selection_count=%s",
+                batch_index, total_batches, batch_maximum, len(batch_selections),
+            )
+        except FeatureError as error:
+            failure_codes.append(error.code)
+            logger.warning(
+                "editor_jefe.batch_failed batch_index=%s batch_count=%s batch_size=%s "
+                "error_category=%s",
+                batch_index, total_batches, batch_maximum, error.code,
+            )
+            if error.code == "provider_configuration_failure":
+                failure_codes.extend(
+                    [error.code] * (total_batches - batch_index)
+                )
+                break
+    return SelectionOutcome(
+        selections=selections,
+        total_batches=total_batches,
+        failed_batches=len(failure_codes),
+        failure_codes=tuple(failure_codes),
+    )

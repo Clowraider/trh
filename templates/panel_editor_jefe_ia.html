@@ -67,7 +67,10 @@
         <div class="alert alert-info">No se encontraron clusters elegibles en los últimos tres días.</div>
       {% elif state == 'zero' %}
         <div class="alert alert-info">La recomendación de la IA no seleccionó ningún cluster. Es un resultado válido.</div>
-      {% elif state == 'recommendation' %}
+      {% elif state in ('recommendation', 'partial') %}
+        {% if state == 'partial' %}
+          <div class="alert alert-warning" role="alert">Se obtuvo un resultado parcial: algunos lotes no pudieron procesarse. Se guardaron únicamente las recomendaciones válidas.</div>
+        {% endif %}
         <h3 class="h5 mb-3">Nuevas recomendaciones de esta ejecución</h3>
         {% for item in selections %}
           <article class="card mb-3"><div class="card-body">

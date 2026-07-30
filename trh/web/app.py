@@ -831,9 +831,10 @@ def editor_jefe_ia():
                     client_factory = app.config.get(
                         "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
                     )
-                    selections = select_recommendations(
+                    outcome = select_recommendations(
                         candidates, parsed_maximum, client_factory()
                     )
+                    selections = outcome.selections
                     if selections:
                         try:
                             save_saved(connection_factory, selections)
@@ -844,7 +845,15 @@ def editor_jefe_ia():
                                 "La recomendación se generó, pero no se pudo guardar el listado persistente.",
                                 "warning",
                             )
-                    state = "recommendation" if selections else "zero"
+                    if outcome.failed_batches:
+                        if selections:
+                            state = "partial"
+                        elif set(outcome.failure_codes) == {"payload_failure"}:
+                            state = "capacity"
+                        else:
+                            state = "error"
+                    else:
+                        state = "recommendation" if selections else "zero"
                 else:
                     state = "no-eligible"
             except FeatureError as error:
