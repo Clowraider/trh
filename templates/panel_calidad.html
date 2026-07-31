@@ -8,140 +8,474 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
       rel="stylesheet"
     />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --trh-bg: #f8fafc;
+        --trh-slate-900: #0f172a;
+        --trh-slate-700: #334155;
+        --trh-slate-500: #64748b;
+        --trh-slate-300: #cbd5e1;
+        --trh-slate-200: #e2e8f0;
+        --trh-slate-100: #f1f5f9;
+        --trh-primary: #2563eb;
+        --trh-primary-light: #eff6ff;
+        --trh-success: #16a34a;
+        --trh-success-light: #dcfce7;
+        --trh-warning: #ca8a04;
+        --trh-warning-light: #fef9c3;
+        --trh-danger: #dc2626;
+        --trh-danger-light: #fee2e2;
+      }
+
+      body {
+        background-color: var(--trh-bg);
+        color: var(--trh-slate-900);
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, sans-serif;
+      }
+
+      .trh-card {
+        background: #fff;
+        border: 1px solid var(--trh-slate-200);
+        border-radius: 1rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      }
+
+      .trh-page-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+
+      .trh-page-subtitle {
+        color: var(--trh-slate-500);
+        font-size: 0.9375rem;
+      }
+
+      .trh-back-link {
+        color: var(--trh-slate-500);
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-decoration: none;
+      }
+      .trh-back-link:hover {
+        color: var(--trh-slate-900);
+      }
+
+      /* KPI cards */
+      .trh-kpi {
+        border-radius: 0.875rem;
+        padding: 1.25rem;
+        height: 100%;
+        border: 1px solid var(--trh-slate-200);
+        background: #fff;
+        transition: box-shadow 0.15s ease;
+      }
+      .trh-kpi:hover {
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.06);
+      }
+      .trh-kpi-icon {
+        width: 2.5rem;
+        height: 2.5rem;
+        border-radius: 0.625rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.125rem;
+        margin-bottom: 0.75rem;
+      }
+      .trh-kpi-label {
+        color: var(--trh-slate-500);
+        font-size: 0.8125rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .trh-kpi-value {
+        font-size: 1.625rem;
+        font-weight: 700;
+        line-height: 1.2;
+      }
+      .trh-kpi-delta {
+        font-size: 0.8125rem;
+        font-weight: 500;
+        margin-top: 0.25rem;
+      }
+
+      /* Filters */
+      .trh-filter-card {
+        padding: 1rem 1.25rem;
+      }
+      .trh-filter-label {
+        color: var(--trh-slate-500);
+        font-size: 0.8125rem;
+        font-weight: 500;
+        margin-bottom: 0.375rem;
+      }
+      .trh-filter-input {
+        border-color: var(--trh-slate-200);
+        border-radius: 0.625rem;
+        font-size: 0.875rem;
+        min-height: 2.5rem;
+      }
+      .trh-filter-input:focus {
+        border-color: var(--trh-primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+      }
+      .trh-btn-primary {
+        background-color: var(--trh-primary);
+        border-color: var(--trh-primary);
+        border-radius: 0.625rem;
+        font-weight: 600;
+        font-size: 0.875rem;
+        min-height: 2.5rem;
+      }
+      .trh-btn-primary:hover {
+        background-color: #1d4ed8;
+        border-color: #1d4ed8;
+      }
+      .trh-btn-ghost {
+        color: var(--trh-slate-500);
+        font-weight: 500;
+        font-size: 0.875rem;
+        text-decoration: none;
+      }
+      .trh-btn-ghost:hover {
+        color: var(--trh-slate-900);
+      }
+
+      /* Table */
+      .trh-table-card {
+        overflow: hidden;
+      }
+      .trh-table-header {
+        padding: 1.25rem 1.5rem 0.5rem;
+      }
+      .trh-table-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+      }
+      .trh-table {
+        margin-bottom: 0;
+        font-size: 0.875rem;
+      }
+      .trh-table thead th {
+        background-color: var(--trh-slate-100);
+        border-bottom: 1px solid var(--trh-slate-200);
+        color: var(--trh-slate-500);
+        font-size: 0.6875rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        padding: 0.75rem 1rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+      .trh-table tbody td {
+        border-bottom: 1px solid var(--trh-slate-100);
+        padding: 0.875rem 1rem;
+        vertical-align: middle;
+      }
+      .trh-table tbody tr:last-child td {
+        border-bottom: none;
+      }
+      .trh-table tbody tr:hover td {
+        background-color: #fafbfc;
+      }
+      .trh-source-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.375rem;
+        padding: 0.375rem 0.625rem;
+        border-radius: 9999px;
+        font-size: 0.8125rem;
+        font-weight: 600;
+      }
+      .trh-quality-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 3.25rem;
+        padding: 0.25rem 0.5rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 700;
+      }
+      .trh-quality-badge.good {
+        background-color: var(--trh-success-light);
+        color: var(--trh-success);
+      }
+      .trh-quality-badge.mid {
+        background-color: var(--trh-warning-light);
+        color: var(--trh-warning);
+      }
+      .trh-quality-badge.bad {
+        background-color: var(--trh-danger-light);
+        color: var(--trh-danger);
+      }
+      .trh-count {
+        font-variant-numeric: tabular-nums;
+        font-weight: 600;
+      }
+      .trh-avg {
+        color: var(--trh-slate-700);
+        font-variant-numeric: tabular-nums;
+      }
+
+      /* Empty state */
+      .trh-empty {
+        padding: 3rem 1.5rem;
+        text-align: center;
+        color: var(--trh-slate-500);
+      }
+      .trh-empty-icon {
+        font-size: 2rem;
+        color: var(--trh-slate-300);
+        margin-bottom: 0.75rem;
+      }
+
+      /* Chart */
+      .trh-chart-card {
+        padding: 1.25rem 1.5rem;
+      }
+      .trh-chart-title {
+        font-size: 1.125rem;
+        font-weight: 600;
+      }
+      .trh-chart-subtitle {
+        color: var(--trh-slate-500);
+        font-size: 0.8125rem;
+      }
+    </style>
   </head>
-  <body class="bg-light">
+  <body>
     <div class="container py-4">
-      <div class="d-flex justify-content-between align-items-center mb-3">
-        <div>
-          <a href="/" class="text-decoration-none text-muted"
-            >← Volver al panel</a
-          >
-          <h3 class="mb-0 mt-1">📊 Calidad de extracción</h3>
+      <!-- Header -->
+      <div class="mb-4">
+        <a href="/" class="trh-back-link">
+          <i class="bi bi-arrow-left"></i> Volver al panel
+        </a>
+        <h1 class="trh-page-title mt-1">Reporte de Calidad</h1>
+        <p class="trh-page-subtitle mb-0">
+          Metricas de extraccion y calidad por fuente
+        </p>
+      </div>
+
+      {% set total_noticias = filas | map(attribute='total') | sum if filas else 0 %}
+      {% set total_ok = filas | map(attribute='titulo_ok') | sum if filas else 0 %}
+      {% set calidad_promedio = ((total_ok / total_noticias * 100) | round(0)) if total_noticias else 0 %}
+      {% set fuentes_activas = filas | length if filas else 0 %}
+      {% set extracciones_hoy = stats_extraccion.series.values() | map('last') | sum if stats_extraccion.fuentes else 0 %}
+
+      <!-- KPIs -->
+      <div class="row g-3 mb-4">
+        <div class="col-6 col-lg-3">
+          <div class="trh-kpi">
+            <div class="trh-kpi-icon" style="background: var(--trh-primary-light); color: var(--trh-primary);">
+              <i class="bi bi-newspaper"></i>
+            </div>
+            <div class="trh-kpi-label">Total noticias</div>
+            <div class="trh-kpi-value">{{ total_noticias }}</div>
+            {% if filas %}
+            <div class="trh-kpi-delta" style="color: var(--trh-slate-500);">
+              {{ filas | length }} fuente{{ "s" if filas | length != 1 else "" }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-6 col-lg-3">
+          <div class="trh-kpi">
+            <div class="trh-kpi-icon" style="background: var(--trh-success-light); color: var(--trh-success);">
+              <i class="bi bi-check-circle"></i>
+            </div>
+            <div class="trh-kpi-label">Calidad promedio</div>
+            <div class="trh-kpi-value">{{ calidad_promedio }}%</div>
+            <div class="trh-kpi-delta" style="color: var(--trh-slate-500);">
+              Basado en titulos OK
+            </div>
+          </div>
+        </div>
+        <div class="col-6 col-lg-3">
+          <div class="trh-kpi">
+            <div class="trh-kpi-icon" style="background: #f3e8ff; color: #7c3aed;">
+              <i class="bi bi-rss"></i>
+            </div>
+            <div class="trh-kpi-label">Fuentes activas</div>
+            <div class="trh-kpi-value">{{ fuentes_activas }}</div>
+            {% if fuente_actual %}
+            <div class="trh-kpi-delta" style="color: var(--trh-slate-500);">
+              Filtrado por {{ fuente_actual }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        <div class="col-6 col-lg-3">
+          <div class="trh-kpi">
+            <div class="trh-kpi-icon" style="background: #fff7ed; color: #ea580c;">
+              <i class="bi bi-calendar-check"></i>
+            </div>
+            <div class="trh-kpi-label">Extracciones hoy</div>
+            <div class="trh-kpi-value">{{ extracciones_hoy }}</div>
+            <div class="trh-kpi-delta" style="color: var(--trh-slate-500);">
+              Ultimas 24 horas
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="card mb-3">
-        <div class="card-body">
-          <form class="row g-2" method="GET" action="/reportes/calidad">
-            <div class="col-md-3">
-              <label class="form-label">Desde</label>
+      <!-- Filters -->
+      <div class="trh-card trh-filter-card mb-4">
+        <form method="GET" action="/reportes/calidad">
+          <div class="row g-3 align-items-end">
+            <div class="col-12 col-md-3 col-lg-2">
+              <div class="trh-filter-label">Desde</div>
               <input
                 type="date"
-                class="form-control"
+                class="form-control trh-filter-input"
                 name="desde"
                 value="{{ desde }}"
               />
             </div>
-            <div class="col-md-3">
-              <label class="form-label">Hasta</label>
+            <div class="col-12 col-md-3 col-lg-2">
+              <div class="trh-filter-label">Hasta</div>
               <input
                 type="date"
-                class="form-control"
+                class="form-control trh-filter-input"
                 name="hasta"
                 value="{{ hasta }}"
               />
             </div>
-            <div class="col-md-4">
-              <label class="form-label">Fuente</label>
-              <select class="form-select" name="fuente">
-                <option value="">Todas</option>
+            <div class="col-12 col-md-4 col-lg-3">
+              <div class="trh-filter-label">Fuente</div>
+              <select class="form-select trh-filter-input" name="fuente">
+                <option value="">Todas las fuentes</option>
                 {% for f in fuentes %}
-                <option
-                  value="{{ f }}"
-                  {%
-                  if
-                  fuente_actual
-                  in
-                  [f]
-                  %}selected{%
-                  endif
-                  %}
-                >
+                <option value="{{ f }}" {% if fuente_actual == f %}selected{% endif %}>
                   {{ f }}
                 </option>
                 {% endfor %}
               </select>
             </div>
-            <div class="col-md-2 d-flex align-items-end gap-2">
-              <button class="btn btn-primary w-100" type="submit">
-                Filtrar
-              </button>
+            <div class="col-12 col-md-5 col-lg-4">
+              <div class="d-flex gap-2">
+                <button class="btn btn-primary trh-btn-primary flex-grow-1" type="submit">
+                  <i class="bi bi-funnel me-1"></i> Filtrar
+                </button>
+                {% if fuente_actual or desde or hasta %}
+                <a href="/reportes/calidad" class="btn btn-link trh-btn-ghost">
+                  Limpiar
+                </a>
+                {% endif %}
+              </div>
             </div>
-          </form>
-        </div>
+          </div>
+        </form>
       </div>
 
-      <div class="card">
-        <div class="card-body p-0">
-          {% if not filas %}
-          <div class="p-3 text-muted">
-            Sin datos para los filtros seleccionados.
+      <!-- Quality table -->
+      <div class="trh-card trh-table-card mb-4">
+        <div class="trh-table-header d-flex justify-content-between align-items-center">
+          <div>
+            <div class="trh-table-title">Calidad de extraccion por fuente</div>
+            <div class="trh-chart-subtitle">
+              {% if desde or hasta %}
+              Periodo filtrado
+              {% else %}
+              Ultimos registros disponibles
+              {% endif %}
+            </div>
           </div>
-          {% else %}
-          <div class="table-responsive">
-            <table class="table table-sm table-striped mb-0 align-middle">
-              <thead class="table-light">
-                <tr>
-                  <th>Fuente</th>
-                  <th>Total</th>
-                  <th>Título OK</th>
-                  <th>Texto OK</th>
-                  <th>Fecha OK</th>
-                  <th>Imagen OK</th>
-                  <th>URL limpia OK</th>
-                  <th>Prom. título len</th>
-                  <th>Prom. texto len</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for r in filas %}
-                <tr>
-                  <td>{{ r.fuente }}</td>
-                  <td>{{ r.total }}</td>
-                  <td>
-                    {{ ((r.titulo_ok / r.total) * 100)|round(1) }}% ({{
-                    r.titulo_ok }})
-                  </td>
-                  <td>
-                    {{ ((r.texto_ok / r.total) * 100)|round(1) }}% ({{
-                    r.texto_ok }})
-                  </td>
-                  <td>
-                    {{ ((r.fecha_ok / r.total) * 100)|round(1) }}% ({{
-                    r.fecha_ok }})
-                  </td>
-                  <td>
-                    {{ ((r.imagen_ok / r.total) * 100)|round(1) }}% ({{
-                    r.imagen_ok }})
-                  </td>
-                  <td>
-                    {{ ((r.url_limpia_ok / r.total) * 100)|round(1) }}% ({{
-                    r.url_limpia_ok }})
-                  </td>
-                  <td>{{ r.titulo_len_avg or '-' }}</td>
-                  <td>{{ r.texto_len_avg or '-' }}</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-          {% endif %}
         </div>
+        {% if not filas %}
+        <div class="trh-empty">
+          <div class="trh-empty-icon"><i class="bi bi-inbox"></i></div>
+          <div class="fw-medium">Sin datos para los filtros seleccionados</div>
+          <div class="small mt-1">Proba con otro rango de fechas o fuente.</div>
+        </div>
+        {% else %}
+        <div class="table-responsive">
+          <table class="table trh-table">
+            <thead>
+              <tr>
+                <th>Fuente</th>
+                <th class="text-end">Total</th>
+                <th class="text-center">Titulo</th>
+                <th class="text-center">Texto</th>
+                <th class="text-center">Fecha</th>
+                <th class="text-center">Imagen</th>
+                <th class="text-center">URL limpia</th>
+                <th class="text-end">Titulo promedio</th>
+                <th class="text-end">Texto promedio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in filas %}
+              {% set pct_titulo = ((r.titulo_ok / r.total) * 100) | round(0) | int %}
+              {% set pct_texto = ((r.texto_ok / r.total) * 100) | round(0) | int %}
+              {% set pct_fecha = ((r.fecha_ok / r.total) * 100) | round(0) | int %}
+              {% set pct_imagen = ((r.imagen_ok / r.total) * 100) | round(0) | int %}
+              {% set pct_url = ((r.url_limpia_ok / r.total) * 100) | round(0) | int %}
+              <tr>
+                <td>
+                  <span class="trh-source-badge" style="background: var(--trh-slate-100); color: var(--trh-slate-700);">
+                    <i class="bi bi-globe2"></i> {{ r.fuente }}
+                  </span>
+                </td>
+                <td class="text-end trh-count">{{ r.total }}</td>
+                <td class="text-center">
+                  <span class="trh-quality-badge {{ 'good' if pct_titulo >= 80 else ('mid' if pct_titulo >= 50 else 'bad') }}">
+                    {{ pct_titulo }}%
+                  </span>
+                </td>
+                <td class="text-center">
+                  <span class="trh-quality-badge {{ 'good' if pct_texto >= 80 else ('mid' if pct_texto >= 50 else 'bad') }}">
+                    {{ pct_texto }}%
+                  </span>
+                </td>
+                <td class="text-center">
+                  <span class="trh-quality-badge {{ 'good' if pct_fecha >= 80 else ('mid' if pct_fecha >= 50 else 'bad') }}">
+                    {{ pct_fecha }}%
+                  </span>
+                </td>
+                <td class="text-center">
+                  <span class="trh-quality-badge {{ 'good' if pct_imagen >= 80 else ('mid' if pct_imagen >= 50 else 'bad') }}">
+                    {{ pct_imagen }}%
+                  </span>
+                </td>
+                <td class="text-center">
+                  <span class="trh-quality-badge {{ 'good' if pct_url >= 80 else ('mid' if pct_url >= 50 else 'bad') }}">
+                    {{ pct_url }}%
+                  </span>
+                </td>
+                <td class="text-end trh-avg">{{ r.titulo_len_avg or '-' }}</td>
+                <td class="text-end trh-avg">{{ r.texto_len_avg or '-' }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endif %}
       </div>
 
-      <div class="card mt-3">
-        <div class="card-body">
-          <h5 class="card-title mb-3">
-            📈 Noticias extraídas por fuente — últimos 7 días
-          </h5>
-          {% if stats_extraccion.fuentes %}
-          <div style="position: relative; height: 320px">
-            <canvas id="extraccionChart"></canvas>
-          </div>
-          {% else %}
-          <div class="text-muted">Sin datos de extracción en los últimos 7 días.</div>
-          {% endif %}
+      <!-- Extraction chart -->
+      <div class="trh-card trh-chart-card">
+        <div class="mb-3">
+          <div class="trh-chart-title">Volumen de extraccion diaria por fuente</div>
+          <div class="trh-chart-subtitle">Ultimos 7 dias calendario</div>
         </div>
+        {% if stats_extraccion.fuentes %}
+        <div style="position: relative; height: 320px">
+          <canvas id="extraccionChart"></canvas>
+        </div>
+        {% else %}
+        <div class="trh-empty">
+          <div class="trh-empty-icon"><i class="bi bi-bar-chart"></i></div>
+          <div class="fw-medium">Sin datos de extraccion en los ultimos 7 dias</div>
+        </div>
+        {% endif %}
       </div>
     </div>
 
@@ -158,8 +492,8 @@
         });
 
         const palette = [
-          '#0d6efd', '#198754', '#dc3545', '#ffc107', '#0dcaf0',
-          '#6610f2', '#fd7e14', '#20c997', '#d63384', '#6f42c1'
+          '#2563eb', '#16a34a', '#dc2626', '#ca8a04', '#0891b2',
+          '#7c3aed', '#ea580c', '#059669', '#db2777', '#4f46e5'
         ];
 
         const datasets = stats.fuentes.map(function (fuente, index) {
@@ -169,7 +503,9 @@
             data: stats.series[fuente],
             backgroundColor: color,
             borderColor: color,
-            borderWidth: 1
+            borderWidth: 0,
+            borderRadius: 4,
+            borderSkipped: false,
           };
         });
 
@@ -180,10 +516,22 @@
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
-              legend: { position: 'bottom' },
+              legend: {
+                position: 'bottom',
+                labels: {
+                  usePointStyle: true,
+                  padding: 20,
+                  font: { size: 12 }
+                }
+              },
               tooltip: {
                 mode: 'index',
                 intersect: false,
+                backgroundColor: 'rgba(15, 23, 42, 0.92)',
+                titleFont: { size: 13 },
+                bodyFont: { size: 13 },
+                padding: 12,
+                cornerRadius: 8,
                 callbacks: {
                   title: function (items) {
                     const idx = items[0].dataIndex;
@@ -195,10 +543,13 @@
             scales: {
               y: {
                 beginAtZero: true,
-                title: { display: true, text: 'Noticias extraídas' }
+                grid: { color: '#f1f5f9' },
+                ticks: { font: { size: 12 }, color: '#64748b' },
+                title: { display: false }
               },
               x: {
-                title: { display: true, text: 'Día' }
+                grid: { display: false },
+                ticks: { font: { size: 12 }, color: '#64748b' }
               }
             }
           }
