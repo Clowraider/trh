@@ -128,6 +128,82 @@
           {% endif %}
         </div>
       </div>
+
+      <div class="card mt-3">
+        <div class="card-body">
+          <h5 class="card-title mb-3">
+            📈 Noticias extraídas por fuente — últimos 7 días
+          </h5>
+          {% if stats_extraccion.fuentes %}
+          <div style="position: relative; height: 320px">
+            <canvas id="extraccionChart"></canvas>
+          </div>
+          {% else %}
+          <div class="text-muted">Sin datos de extracción en los últimos 7 días.</div>
+          {% endif %}
+        </div>
+      </div>
     </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script>
+      (function () {
+        const stats = {{ stats_extraccion | tojson }};
+        if (!stats.fuentes.length) return;
+
+        const ctx = document.getElementById('extraccionChart').getContext('2d');
+        const labels = stats.fechas.map(function (fecha) {
+          const [y, m, d] = fecha.split('-');
+          return d + '/' + m;
+        });
+
+        const palette = [
+          '#0d6efd', '#198754', '#dc3545', '#ffc107', '#0dcaf0',
+          '#6610f2', '#fd7e14', '#20c997', '#d63384', '#6f42c1'
+        ];
+
+        const datasets = stats.fuentes.map(function (fuente, index) {
+          const color = palette[index % palette.length];
+          return {
+            label: fuente,
+            data: stats.series[fuente],
+            backgroundColor: color,
+            borderColor: color,
+            borderWidth: 1
+          };
+        });
+
+        new Chart(ctx, {
+          type: 'bar',
+          data: { labels: labels, datasets: datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { position: 'bottom' },
+              tooltip: {
+                mode: 'index',
+                intersect: false,
+                callbacks: {
+                  title: function (items) {
+                    const idx = items[0].dataIndex;
+                    return stats.fechas[idx];
+                  }
+                }
+              }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                title: { display: true, text: 'Noticias extraídas' }
+              },
+              x: {
+                title: { display: true, text: 'Día' }
+              }
+            }
+          }
+        });
+      })();
+    </script>
   </body>
 </html>

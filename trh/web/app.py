@@ -656,6 +656,75 @@ def obtener_reporte_calidad(fuente=None, desde=None, hasta=None):
         conn.close()
 
 
+def obtener_estadisticas_extraccion():
+    """
+    Devuelve la cantidad diaria de noticias extraídas de los últimos 7 días
+    (incluyendo hoy), separadas por fuente.
+
+    Retorna:
+        dict con {
+            'fechas': ['YYYY-MM-DD', ...],
+            'fuentes': ['fuente1', ...],
+            'series': {
+                'fuente1': [c1, c2, ...],
+                ...
+            }
+        }
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                WITH dias AS (
+                    SELECT generate_series(
+                        CURRENT_DATE - INTERVAL '6 days',
+                        CURRENT_DATE,
+                        INTERVAL '1 day'
+                    )::date AS dia
+                ),
+                fuentes_activas AS (
+                    SELECT DISTINCT fuente
+                    FROM noticias_historico
+                    WHERE fuente IS NOT NULL
+                      AND fecha_extraccion >= CURRENT_DATE - INTERVAL '6 days'
+                ),
+                base AS (
+                    SELECT d.dia, f.fuente
+                    FROM dias d
+                    CROSS JOIN fuentes_activas f
+                )
+                SELECT
+                    b.dia AS fecha,
+                    b.fuente,
+                    COUNT(n.id) AS cantidad
+                FROM base b
+                LEFT JOIN noticias_historico n
+                    ON n.fuente = b.fuente
+                    AND n.fecha_extraccion::date = b.dia
+                GROUP BY b.dia, b.fuente
+                ORDER BY b.dia, b.fuente
+            """)
+            filas = cur.fetchall()
+
+            fechas = sorted({f['fecha'] for f in filas})
+            fechas_str = [f.strftime('%Y-%m-%d') for f in fechas]
+            fuentes = sorted({f['fuente'] for f in filas})
+
+            data = {(f['fecha'], f['fuente']): f['cantidad'] for f in filas}
+            series = {
+                fuente: [data.get((fecha, fuente), 0) for fecha in fechas]
+                for fuente in fuentes
+            }
+
+            return {
+                'fechas': fechas_str,
+                'fuentes': fuentes,
+                'series': series,
+            }
+    finally:
+        conn.close()
+
+
 def normalizar_keyword_minima(keyword):
     """
     Normalización mínima acordada: trim + minúsculas.
@@ -927,6 +996,7 @@ def reporte_calidad():
         desde=desde,
         hasta=hasta
     )
+    stats_extraccion = obtener_estadisticas_extraccion()
 
     return render_template(
         "panel_calidad.html",
@@ -934,7 +1004,8 @@ def reporte_calidad():
         fuentes=fuentes,
         fuente_actual=fuente or '',
         desde=desde or '',
-        hasta=hasta or ''
+        hasta=hasta or '',
+        stats_extraccion=stats_extraccion
     )
 
 
