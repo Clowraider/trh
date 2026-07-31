@@ -5,31 +5,180 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Editor Jefe IA — TRH</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
     <style>
-      .badge-generado {
-        background-color: #198754;
+      :root {
+        --trh-bg: #f8fafc;
+        --trh-slate-900: #0f172a;
+        --trh-slate-700: #334155;
+        --trh-slate-500: #64748b;
+        --trh-slate-300: #cbd5e1;
+        --trh-slate-200: #e2e8f0;
+        --trh-slate-100: #f1f5f9;
+        --trh-primary: #2563eb;
+        --trh-primary-light: #eff6ff;
+        --trh-success: #16a34a;
+        --trh-success-light: #dcfce7;
+        --trh-warning: #ca8a04;
+        --trh-warning-light: #fef9c3;
+        --trh-danger: #dc2626;
+        --trh-danger-light: #fee2e2;
       }
-      .foto-radio input[type="radio"]:checked + img,
-      .foto-secundaria input[type="checkbox"]:checked + img {
-        border: 4px solid #084298;
-        box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.25);
-        filter: saturate(1.1) contrast(1.05);
+
+      body {
+        background-color: var(--trh-bg);
+        color: var(--trh-slate-900);
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, sans-serif;
+      }
+
+      .trh-card {
+        background: #fff;
+        border: 1px solid var(--trh-slate-200);
+        border-radius: 1rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      }
+
+      .trh-page-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+
+      .trh-page-subtitle {
+        color: var(--trh-slate-500);
+        font-size: 0.9375rem;
+      }
+
+      .trh-theme-toggle {
+        background: var(--trh-slate-100);
+        border: 1px solid var(--trh-slate-200);
+        color: var(--trh-slate-700);
+        border-radius: 0.625rem;
+        width: 2.5rem;
+        height: 2.5rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.125rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .trh-theme-toggle:hover {
+        background: var(--trh-slate-200);
+      }
+
+      .trh-btn-primary {
+        background-color: var(--trh-primary);
+        border-color: var(--trh-primary);
+        border-radius: 0.625rem;
+        font-weight: 600;
+        font-size: 0.875rem;
+      }
+      .trh-btn-primary:hover {
+        background-color: #1d4ed8;
+        border-color: #1d4ed8;
+      }
+      .trh-btn-outline {
+        border-color: var(--trh-slate-200);
+        color: var(--trh-slate-700);
+        border-radius: 0.625rem;
+        font-weight: 500;
+        font-size: 0.875rem;
+      }
+      .trh-btn-outline:hover {
+        background-color: var(--trh-slate-100);
+        border-color: var(--trh-slate-200);
+        color: var(--trh-slate-900);
+      }
+
+      .badge-generado {
+        background-color: var(--trh-success);
       }
       .priority-keyword {
-        color: #0d6efd;
-        border-color: #0d6efd !important;
-        background-color: rgba(13, 110, 253, 0.08) !important;
+        color: var(--trh-primary) !important;
+        border-color: var(--trh-primary) !important;
+        background-color: var(--trh-primary-light) !important;
+      }
+
+      /* Dark mode overrides */
+      [data-bs-theme="dark"] {
+        --trh-bg: #0f172a;
+        --trh-slate-900: #f8fafc;
+        --trh-slate-700: #e2e8f0;
+        --trh-slate-500: #94a3b8;
+        --trh-slate-300: #334155;
+        --trh-slate-200: #1e293b;
+        --trh-slate-100: #1e293b;
+      }
+      [data-bs-theme="dark"] .trh-card {
+        background: #1e293b;
+        border-color: #334155;
+      }
+      [data-bs-theme="dark"] .trh-theme-toggle {
+        background: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .trh-theme-toggle:hover {
+        background: #334155;
+      }
+      [data-bs-theme="dark"] .form-control,
+      [data-bs-theme="dark"] .form-select {
+        background-color: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .nav-tabs {
+        border-bottom-color: #334155;
+      }
+      [data-bs-theme="dark"] .nav-tabs .nav-link {
+        color: #94a3b8;
+      }
+      [data-bs-theme="dark"] .nav-tabs .nav-link.active {
+        background-color: #1e293b;
+        color: #f8fafc;
+        border-color: #334155 #334155 #1e293b;
+      }
+      [data-bs-theme="dark"] .text-muted {
+        color: #94a3b8 !important;
+      }
+      [data-bs-theme="dark"] .text-bg-light {
+        background-color: #334155 !important;
+        color: #f8fafc !important;
+      }
+      [data-bs-theme="dark"] .bg-light {
+        background-color: #1e293b !important;
+      }
+      [data-bs-theme="dark"] .border {
+        border-color: #334155 !important;
+      }
+      [data-bs-theme="dark"] .border-bottom {
+        border-bottom-color: #334155 !important;
       }
     </style>
   </head>
-  <body class="bg-light">
+  <body>
     <main class="container py-4">
       <nav class="nav nav-tabs mb-4">
         <a class="nav-link" href="{{ url_for('index') }}">Clusters</a>
         <a class="nav-link active" href="{{ url_for('editor_jefe_ia') }}">Editor Jefe IA</a>
       </nav>
-      <h2>Editor Jefe IA</h2>
-      <p class="text-muted">Elegí cuántos candidatos mejor rankeados debe procesar la IA y el score editorial mínimo requerido. Las propuestas aceptadas quedan guardadas y no se vuelven a procesar en corridas futuras. Puede recomendar cualquier subconjunto relevante, incluso ninguno.</p>
+      <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+          <h1 class="trh-page-title">Editor Jefe IA</h1>
+          <p class="trh-page-subtitle mb-0">Elegí cuántos candidatos mejor rankeados debe procesar la IA y el score editorial mínimo requerido. Las propuestas aceptadas quedan guardadas y no se vuelven a procesar en corridas futuras. Puede recomendar cualquier subconjunto relevante, incluso ninguno.</p>
+        </div>
+        <button
+          type="button"
+          class="trh-theme-toggle"
+          id="themeToggle"
+          aria-label="Cambiar modo oscuro"
+          title="Cambiar modo oscuro"
+        >
+          <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+        </button>
+      </div>
 
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
@@ -42,7 +191,7 @@
         {% endif %}
       {% endwith %}
 
-      <form method="post" class="card card-body mb-4">
+      <form method="post" class="card trh-card card-body mb-4">
         <label class="form-label" for="maximum">Cantidad de candidatos a procesar</label>
         <input class="form-control mb-3" id="maximum" name="maximum" type="number" min="1" step="1" required value="{{ maximum }}" />
         <div class="form-text mb-3">
@@ -50,7 +199,7 @@
         </div>
         <label class="form-label" for="minimum_editorial_score">Score editorial mínimo</label>
         <input class="form-control mb-3" id="minimum_editorial_score" name="minimum_editorial_score" type="number" min="1" step="1" required value="{{ minimum_editorial_score }}" />
-        <button class="btn btn-primary" type="submit">Solicitar recomendación</button>
+        <button class="btn btn-primary trh-btn-primary" type="submit"><i class="bi bi-stars me-2"></i>Solicitar recomendación</button>
       </form>
 
       {% if state == 'idle' %}
@@ -71,13 +220,13 @@
         {% if state == 'partial' %}
           <div class="alert alert-warning" role="alert">Se obtuvo un resultado parcial: algunos lotes no pudieron procesarse. Se guardaron únicamente las recomendaciones válidas.</div>
         {% endif %}
-        <h3 class="h5 mb-3">Nuevas recomendaciones de esta ejecución</h3>
+        <h3 class="h5 mb-3" style="font-weight: 600"><i class="bi bi-lightning me-2"></i>Nuevas recomendaciones de esta ejecución</h3>
         {% for item in selections %}
-          <article class="card mb-3"><div class="card-body">
+          <article class="card trh-card mb-3"><div class="card-body">
             <div class="d-flex justify-content-between align-items-start gap-2">
               <div>
-                <h4 class="h6">{{ item.title }}</h4>
-                <p class="mb-2">{{ item.reason }}</p>
+                <h4 class="h6" style="font-weight: 600">{{ item.title }}</h4>
+                <p class="mb-2" style="color: var(--trh-slate-500)">{{ item.reason }}</p>
               </div>
               <div class="d-flex gap-2">
                 <form method="post" action="{{ url_for('descartar_cluster', cluster_id=item.cluster_id) }}" onsubmit="return confirm('¿Descartar este candidato?');">
@@ -113,24 +262,24 @@
         <section class="mt-4">
           <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
             <div>
-              <h3 class="h5 mb-1">Propuestas guardadas</h3>
+              <h3 class="h5 mb-1" style="font-weight: 600"><i class="bi bi-bookmark-star me-2"></i>Propuestas guardadas</h3>
               <p class="text-muted mb-0">Estos clusters ya fueron recomendados por Editor Jefe IA y no se vuelven a procesar en ejecuciones futuras.</p>
             </div>
             <form method="post" action="{{ url_for('generar_articulos_guardados_editor_jefe_ia') }}">
-              <button type="submit" class="btn btn-primary">Generar artículos IA</button>
+              <button type="submit" class="btn btn-primary trh-btn-primary"><i class="bi bi-robot me-2"></i>Generar artículos IA</button>
             </form>
           </div>
           {% for item in saved_recommendations %}
-            <article class="card mb-3"><div class="card-body">
+            <article class="card trh-card mb-3"><div class="card-body">
               <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
-                  <h4 class="h6">{{ item.title }}</h4>
-                  <p class="mb-2">{{ item.reason }}</p>
+                  <h4 class="h6" style="font-weight: 600">{{ item.title }}</h4>
+                  <p class="mb-2" style="color: var(--trh-slate-500)">{{ item.reason }}</p>
                   {% if (item.estado_publicacion or 'pendiente') == 'generado' %}
-                    <span class="badge badge-generado mb-2">✅ Listo</span>
+                    <span class="badge badge-generado mb-2"><i class="bi bi-check-circle me-1"></i>Listo</span>
                   {% endif %}
                   {% if item.requiere_revision_editorial %}
-                    <span class="badge bg-warning text-dark mb-2">⚠️ Requiere revisión editorial</span>
+                    <span class="badge bg-warning text-dark mb-2"><i class="bi bi-exclamation-triangle me-1"></i>Requiere revisión editorial</span>
                   {% endif %}
                 </div>
                 <div class="d-flex gap-2">
@@ -143,7 +292,7 @@
                       aria-expanded="false"
                       aria-controls="quick-publish-{{ item.cluster_id }}"
                     >
-                      Elegir fotos
+                      <i class="bi bi-images me-1"></i>Elegir fotos
                     </button>
                   {% elif (item.estado_publicacion or 'pendiente') == 'generado' and item.requiere_revision_editorial %}
                     <span class="small text-warning-emphasis align-self-center">
@@ -177,8 +326,8 @@
                {% endif %}
                {% if (item.estado_publicacion or 'pendiente') == 'generado' and item.quick_publish_cluster and not item.requiere_revision_editorial %}
                  <div class="collapse mt-3" id="quick-publish-{{ item.cluster_id }}">
-                   <div class="border rounded bg-light p-3">
-                    <p class="small text-muted mb-3">
+                   <div class="border rounded p-3" style="background: var(--trh-slate-100); border-color: var(--trh-slate-200) !important">
+                    <p class="small mb-3" style="color: var(--trh-slate-500)">
                       Elegí la foto principal, las secundarias y publicá directo sin pasar por el preview.
                     </p>
                     <form method="post" action="{{ url_for('publicar_cluster', cluster_id=item.cluster_id) }}">
@@ -189,20 +338,51 @@
                       {% if noticias or (cluster.fotos_manuales or []) %}
                         {% include '_photo_selector_fields.html' %}
                       {% else %}
-                        <p class="text-muted mb-3">No hay fotos disponibles en las noticias de este cluster.</p>
+                        <p class="mb-3" style="color: var(--trh-slate-500)">No hay fotos disponibles en las noticias de este cluster.</p>
                       {% endif %}
                       <div class="mt-3 d-flex justify-content-end">
-                        <button type="submit" class="btn btn-success">Publicar</button>
+                        <button type="submit" class="btn btn-success"><i class="bi bi-rocket-takeoff me-2"></i>Publicar</button>
                       </div>
                     </form>
                   </div>
-                </div>
-              {% endif %}
-            </div></article>
-          {% endfor %}
-        </section>
-      {% endif %}
+                 </div>
+               {% endif %}
+             </div></article>
+           {% endfor %}
+         </section>
+       {% endif %}
     </main>
+    <script>
+      (function () {
+        const html = document.documentElement;
+        const toggle = document.getElementById('themeToggle');
+        const icon = document.getElementById('themeIcon');
+        const STORAGE_KEY = 'trh-theme';
+
+        function applyTheme(dark) {
+          if (dark) {
+            html.setAttribute('data-bs-theme', 'dark');
+            icon.classList.remove('bi-moon-stars-fill');
+            icon.classList.add('bi-sun-fill');
+          } else {
+            html.setAttribute('data-bs-theme', 'light');
+            icon.classList.remove('bi-sun-fill');
+            icon.classList.add('bi-moon-stars-fill');
+          }
+        }
+
+        const saved = localStorage.getItem(STORAGE_KEY);
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        applyTheme(saved ? saved === 'dark' : prefersDark);
+
+        toggle.addEventListener('click', function () {
+          const isDark = html.getAttribute('data-bs-theme') === 'dark';
+          const next = !isDark;
+          applyTheme(next);
+          localStorage.setItem(STORAGE_KEY, next ? 'dark' : 'light');
+        });
+      })();
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
     {% set keyword_modal_return_to = 'editor_jefe_ia' %}
     {% include '_keyword_priority_modal.html' %}

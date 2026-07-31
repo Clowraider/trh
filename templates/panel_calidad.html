@@ -249,19 +249,102 @@
         color: var(--trh-slate-500);
         font-size: 0.8125rem;
       }
+
+      /* Dark mode toggle */
+      .trh-theme-toggle {
+        background: var(--trh-slate-100);
+        border: 1px solid var(--trh-slate-200);
+        color: var(--trh-slate-700);
+        border-radius: 0.625rem;
+        width: 2.5rem;
+        height: 2.5rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.125rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .trh-theme-toggle:hover {
+        background: var(--trh-slate-200);
+      }
+
+      /* Dark mode overrides */
+      [data-bs-theme="dark"] {
+        --trh-bg: #0f172a;
+        --trh-slate-900: #f8fafc;
+        --trh-slate-700: #e2e8f0;
+        --trh-slate-500: #94a3b8;
+        --trh-slate-300: #334155;
+        --trh-slate-200: #1e293b;
+        --trh-slate-100: #1e293b;
+      }
+      [data-bs-theme="dark"] .trh-card,
+      [data-bs-theme="dark"] .trh-kpi {
+        background: #1e293b;
+        border-color: #334155;
+      }
+      [data-bs-theme="dark"] .trh-table thead th {
+        background-color: #1e293b;
+        border-bottom-color: #334155;
+      }
+      [data-bs-theme="dark"] .trh-table tbody td {
+        border-bottom-color: #334155;
+      }
+      [data-bs-theme="dark"] .trh-table tbody tr:hover td {
+        background-color: #334155;
+      }
+      [data-bs-theme="dark"] .trh-source-badge {
+        background: #334155 !important;
+        color: #f8fafc !important;
+      }
+      [data-bs-theme="dark"] .trh-theme-toggle {
+        background: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .trh-theme-toggle:hover {
+        background: #334155;
+      }
+      [data-bs-theme="dark"] .trh-filter-input {
+        background: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .form-select {
+        background-color: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .form-control {
+        background-color: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
     </style>
   </head>
   <body>
     <div class="container py-4">
       <!-- Header -->
-      <div class="mb-4">
-        <a href="/" class="trh-back-link">
-          <i class="bi bi-arrow-left"></i> Volver al panel
-        </a>
-        <h1 class="trh-page-title mt-1">Reporte de Calidad</h1>
-        <p class="trh-page-subtitle mb-0">
-          Metricas de extraccion y calidad por fuente
-        </p>
+      <div class="d-flex justify-content-between align-items-start mb-4">
+        <div>
+          <a href="/" class="trh-back-link">
+            <i class="bi bi-arrow-left"></i> Volver al panel
+          </a>
+          <h1 class="trh-page-title mt-1">Reporte de Calidad</h1>
+          <p class="trh-page-subtitle mb-0">
+            Metricas de extraccion y calidad por fuente
+          </p>
+        </div>
+        <button
+          type="button"
+          class="trh-theme-toggle"
+          id="themeToggle"
+          aria-label="Cambiar modo oscuro"
+          title="Cambiar modo oscuro"
+        >
+          <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+        </button>
       </div>
 
       {% set total_noticias = filas | map(attribute='total') | sum if filas else 0 %}
@@ -478,6 +561,38 @@
         {% endif %}
       </div>
     </div>
+
+    <script>
+      (function () {
+        const html = document.documentElement;
+        const toggle = document.getElementById('themeToggle');
+        const icon = document.getElementById('themeIcon');
+        const STORAGE_KEY = 'trh-theme';
+
+        function applyTheme(dark) {
+          if (dark) {
+            html.setAttribute('data-bs-theme', 'dark');
+            icon.classList.remove('bi-moon-stars-fill');
+            icon.classList.add('bi-sun-fill');
+          } else {
+            html.setAttribute('data-bs-theme', 'light');
+            icon.classList.remove('bi-sun-fill');
+            icon.classList.add('bi-moon-stars-fill');
+          }
+        }
+
+        const saved = localStorage.getItem(STORAGE_KEY);
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        applyTheme(saved ? saved === 'dark' : prefersDark);
+
+        toggle.addEventListener('click', function () {
+          const isDark = html.getAttribute('data-bs-theme') === 'dark';
+          const next = !isDark;
+          applyTheme(next);
+          localStorage.setItem(STORAGE_KEY, next ? 'dark' : 'light');
+        });
+      })();
+    </script>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
     <script>

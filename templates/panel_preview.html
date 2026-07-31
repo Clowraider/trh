@@ -8,18 +8,91 @@
       href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
       rel="stylesheet"
     />
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css"
+      rel="stylesheet"
+    />
     <style>
-      body {
-        background: #f0f2f5;
+      :root {
+        --trh-bg: #f8fafc;
+        --trh-slate-900: #0f172a;
+        --trh-slate-700: #334155;
+        --trh-slate-500: #64748b;
+        --trh-slate-300: #cbd5e1;
+        --trh-slate-200: #e2e8f0;
+        --trh-slate-100: #f1f5f9;
+        --trh-primary: #2563eb;
+        --trh-primary-light: #eff6ff;
+        --trh-success: #16a34a;
+        --trh-success-light: #dcfce7;
+        --trh-warning: #ca8a04;
+        --trh-warning-light: #fef9c3;
+        --trh-danger: #dc2626;
+        --trh-danger-light: #fee2e2;
       }
+
+      body {
+        background-color: var(--trh-bg);
+        color: var(--trh-slate-900);
+        font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, sans-serif;
+      }
+
+      .trh-card {
+        background: #fff;
+        border: 1px solid var(--trh-slate-200);
+        border-radius: 1rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      }
+
+      .trh-page-title {
+        font-size: 1.75rem;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+      }
+
+      .trh-page-subtitle {
+        color: var(--trh-slate-500);
+        font-size: 0.9375rem;
+      }
+
+      .trh-back-link {
+        color: var(--trh-slate-500);
+        font-size: 0.875rem;
+        font-weight: 500;
+        text-decoration: none;
+      }
+      .trh-back-link:hover {
+        color: var(--trh-slate-900);
+      }
+
+      .trh-theme-toggle {
+        background: var(--trh-slate-100);
+        border: 1px solid var(--trh-slate-200);
+        color: var(--trh-slate-700);
+        border-radius: 0.625rem;
+        width: 2.5rem;
+        height: 2.5rem;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.125rem;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .trh-theme-toggle:hover {
+        background: var(--trh-slate-200);
+      }
+
       .article-card {
-        background: white;
-        border-radius: 12px;
-        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+        background: #fff;
+        border-radius: 1rem;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+        border: 1px solid var(--trh-slate-200);
       }
       .article-meta {
         font-size: 0.85rem;
-        color: #6c757d;
+        color: var(--trh-slate-500);
       }
       .article-title {
         font-size: 1.5rem;
@@ -28,8 +101,8 @@
       }
       .article-resumen {
         font-style: italic;
-        color: #495057;
-        border-left: 4px solid #dee2e6;
+        color: var(--trh-slate-700);
+        border-left: 4px solid var(--trh-slate-200);
         padding-left: 1rem;
       }
       .article-body {
@@ -47,7 +120,7 @@
         transition: border-color 0.15s;
       }
       .edit-title:focus {
-        border-color: #0d6efd;
+        border-color: var(--trh-primary);
         outline: none;
       }
       textarea.edit-body {
@@ -57,25 +130,76 @@
       .categoria-badge {
         font-size: 0.85rem;
       }
+
+      /* Dark mode overrides */
+      [data-bs-theme="dark"] {
+        --trh-bg: #0f172a;
+        --trh-slate-900: #f8fafc;
+        --trh-slate-700: #e2e8f0;
+        --trh-slate-500: #94a3b8;
+        --trh-slate-300: #334155;
+        --trh-slate-200: #1e293b;
+        --trh-slate-100: #1e293b;
+      }
+      [data-bs-theme="dark"] .trh-card,
+      [data-bs-theme="dark"] .article-card {
+        background: #1e293b;
+        border-color: #334155;
+      }
+      [data-bs-theme="dark"] .trh-theme-toggle {
+        background: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .trh-theme-toggle:hover {
+        background: #334155;
+      }
+      [data-bs-theme="dark"] .form-control,
+      [data-bs-theme="dark"] .form-select {
+        background-color: #1e293b;
+        border-color: #334155;
+        color: #f8fafc;
+      }
+      [data-bs-theme="dark"] .article-meta {
+        color: #94a3b8;
+      }
+      [data-bs-theme="dark"] .article-resumen {
+        color: #e2e8f0;
+        border-left-color: #334155;
+      }
+      [data-bs-theme="dark"] .text-muted {
+        color: #94a3b8 !important;
+      }
+      [data-bs-theme="dark"] .bg-light {
+        background-color: #1e293b !important;
+      }
     </style>
   </head>
   <body>
     <div class="container py-4" style="max-width: 800px">
       <!-- Header con acciones -->
-      <div class="d-flex justify-content-between align-items-center mb-3">
+      <div class="d-flex justify-content-between align-items-start mb-4">
         <div>
-          <a
-            href="/cluster/{{ cluster.id }}"
-            class="text-decoration-none text-muted"
-          >
-            ← Volver al cluster
+          <a href="/cluster/{{ cluster.id }}" class="trh-back-link">
+            <i class="bi bi-arrow-left"></i> Volver al cluster
           </a>
-          <h4 class="mb-0">Preview — Cluster #{{ cluster.id }}</h4>
+          <h1 class="trh-page-title mt-1">Preview — Cluster #{{ cluster.id }}</h1>
         </div>
-        <div>
-          <span class="badge bg-secondary me-2"
-            >Estado: {{ cluster.estado_publicacion }}</span
+        <div class="text-end">
+          <button
+            type="button"
+            class="trh-theme-toggle mb-2"
+            id="themeToggle"
+            aria-label="Cambiar modo oscuro"
+            title="Cambiar modo oscuro"
           >
+            <i class="bi bi-moon-stars-fill" id="themeIcon"></i>
+          </button>
+          <div>
+            <span class="badge bg-secondary me-2"
+              >Estado: {{ cluster.estado_publicacion }}</span
+            >
+          </div>
         </div>
       </div>
 
@@ -112,7 +236,7 @@
         <div class="article-card p-4 mb-4">
           <!-- Título (editable) -->
           <div class="mb-3">
-            <label class="form-label text-muted small">TÍTULO</label>
+            <label class="form-label small" style="color: var(--trh-slate-500)">TÍTULO</label>
             <input
               type="text"
               class="form-control edit-title"
@@ -124,11 +248,11 @@
 
           <!-- Meta: fuente + fecha + categoría -->
           <div class="d-flex flex-wrap gap-3 mb-3 article-meta">
-            <div><strong>{{ cluster.cantidad_fuentes }}</strong> fuentes</div>
-            <div><strong>{{ cluster.cantidad_noticias }}</strong> noticias</div>
+            <div><i class="bi bi-journal me-1"></i><strong>{{ cluster.cantidad_fuentes }}</strong> fuentes</div>
+            <div><i class="bi bi-newspaper me-1"></i><strong>{{ cluster.cantidad_noticias }}</strong> noticias</div>
             {% if cluster.foto_principal %}
             <div>
-              📷 Foto seleccionada
+              <i class="bi bi-camera me-1"></i>Foto seleccionada
               <img
                 src="{{ cluster.foto_principal }}"
                 alt="foto"
@@ -140,7 +264,7 @@
 
           <!-- Foto principal seleccionada -->
           <div class="mb-4">
-            <label class="form-label text-muted small">FOTO PRINCIPAL</label>
+            <label class="form-label small" style="color: var(--trh-slate-500)">FOTO PRINCIPAL</label>
             {% if cluster.foto_principal %}
             <div>
               <img
@@ -150,8 +274,8 @@
                   width: 100%;
                   max-height: 380px;
                   object-fit: cover;
-                  border-radius: 8px;
-                  border: 1px solid #dee2e6;
+                  border-radius: 0.75rem;
+                  border: 1px solid var(--trh-slate-200);
                 "
               />
             </div>
@@ -160,13 +284,13 @@
             </div>
             {% else %}
             <div class="alert alert-warning py-2 mb-0">
-              No hay foto principal seleccionada para este artículo.
+              <i class="bi bi-exclamation-triangle me-2"></i>No hay foto principal seleccionada para este artículo.
             </div>
             {% endif %}
           </div>
 
           <div class="mb-4">
-            <label class="form-label text-muted small">FOTOS SECUNDARIAS</label>
+            <label class="form-label small" style="color: var(--trh-slate-500)">FOTOS SECUNDARIAS</label>
             {% set secundarias = cluster.fotos_secundarias or [] %} {% if
             secundarias %}
             <div class="row g-2">
@@ -179,8 +303,8 @@
                     width: 100%;
                     max-height: 160px;
                     object-fit: cover;
-                    border-radius: 6px;
-                    border: 1px solid #dee2e6;
+                    border-radius: 0.5rem;
+                    border: 1px solid var(--trh-slate-200);
                   "
                 />
               </div>
@@ -190,15 +314,15 @@
               Se insertan automáticamente entre párrafos al publicar.
             </div>
             {% else %}
-            <div class="alert alert-light border py-2 mb-0">
-              No hay fotos secundarias seleccionadas.
+            <div class="alert alert-light border py-2 mb-0" style="background: var(--trh-slate-100); border-color: var(--trh-slate-200) !important">
+              <i class="bi bi-images me-2"></i>No hay fotos secundarias seleccionadas.
             </div>
             {% endif %}
           </div>
 
           <!-- Resumen (editable) -->
           <div class="mb-3">
-            <label class="form-label text-muted small">RESUMEN / LEAD</label>
+            <label class="form-label small" style="color: var(--trh-slate-500)">RESUMEN / LEAD</label>
             <textarea
               class="form-control"
               id="edit_resumen"
@@ -212,7 +336,7 @@
 
           <!-- Categoría (editable - selector) -->
           <div class="mb-4">
-            <label class="form-label text-muted small">CATEGORÍA</label>
+            <label class="form-label small" style="color: var(--trh-slate-500)">CATEGORÍA</label>
             <select class="form-select categoria-badge" id="edit_categoria">
               {% for cat in categories %}
               <option
@@ -229,7 +353,7 @@
 
           <!-- Cuerpo del artículo (editable) -->
           <div class="mb-4">
-            <label class="form-label text-muted small">ARTÍCULO</label>
+            <label class="form-label small" style="color: var(--trh-slate-500)">ARTÍCULO</label>
             <textarea
               class="form-control edit-body"
               id="edit_articulo"
@@ -242,7 +366,7 @@
 
           <!-- Notas del editor -->
           <div class="mb-4">
-            <label class="form-label text-muted small">
+            <label class="form-label small" style="color: var(--trh-slate-500)">
               NOTAS DEL EDITOR
               <span class="text-muted"
                 >(no se publican, solo para referencia interna)</span
@@ -267,7 +391,7 @@
             class="btn btn-outline-secondary"
             id="btn_guardar"
           >
-            💾 Guardar cambios
+            <i class="bi bi-save me-2"></i>Guardar cambios
           </button>
 
           <!-- Publicar en WordPress -->
@@ -277,11 +401,43 @@
             onclick="publicar_cluster()"
             id="btn_publicar"
           >
-            🚀 Publicar en WordPress
+            <i class="bi bi-rocket-takeoff me-2"></i>Publicar en WordPress
           </button>
         </div>
       </form>
     </div>
+
+    <script>
+      (function () {
+        const html = document.documentElement;
+        const toggle = document.getElementById('themeToggle');
+        const icon = document.getElementById('themeIcon');
+        const STORAGE_KEY = 'trh-theme';
+
+        function applyTheme(dark) {
+          if (dark) {
+            html.setAttribute('data-bs-theme', 'dark');
+            icon.classList.remove('bi-moon-stars-fill');
+            icon.classList.add('bi-sun-fill');
+          } else {
+            html.setAttribute('data-bs-theme', 'light');
+            icon.classList.remove('bi-sun-fill');
+            icon.classList.add('bi-moon-stars-fill');
+          }
+        }
+
+        const saved = localStorage.getItem(STORAGE_KEY);
+        const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        applyTheme(saved ? saved === 'dark' : prefersDark);
+
+        toggle.addEventListener('click', function () {
+          const isDark = html.getAttribute('data-bs-theme') === 'dark';
+          const next = !isDark;
+          applyTheme(next);
+          localStorage.setItem(STORAGE_KEY, next ? 'dark' : 'light');
+        });
+      })();
+    </script>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 
