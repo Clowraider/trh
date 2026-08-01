@@ -151,12 +151,13 @@ El pipeline principal se ejecuta con:
 python3 proceso.py
 ```
 
-Hace esto en orden:
-
-1. Ejecuta todos los crawlers en paralelo.
-2. Genera embeddings.
-3. Agrupa en clusters.
-4. Extrae keywords y entidades.
+`proceso.py` hace:
+- Crawlers en paralelo: descubre y ejecuta automáticamente todos los archivos `crawler/sites/*_crawler.py`. Ahí es donde cada instalación agrega sus propios extractores; no van al repo base.
+- Como ejemplo y punto de partida se incluye `crawler/sites/plantilla_crawler.py`. Copialo, renombralo y adaptalo a tu sitio.
+- Luego, secuencial:
+  1. `pipeline/embedding_archivo.py`
+  2. `pipeline/cluster_noticias.py`
+  3. `pipeline/extraer_keywords_ner.py`
 
 Además gestiona locks para que no se pisen dos ejecuciones, y permite encolar una sola corrida más.
 
