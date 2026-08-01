@@ -6,6 +6,19 @@ from datetime import datetime
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _preserve_sys_modules():
+    """Guarda y restaura sys.modules para no contaminar tests posteriores."""
+    original_modules = dict(sys.modules)
+    yield
+    current_modules = set(sys.modules.keys())
+    for module_name in current_modules - set(original_modules.keys()):
+        sys.modules.pop(module_name, None)
+    for module_name, module in original_modules.items():
+        if sys.modules.get(module_name) is not module:
+            sys.modules[module_name] = module
+
+
 def _write_required_prompt_files(tmp_path, suffix):
     writer_system_prompt = tmp_path / f"article_writer_system_prompt_{suffix}.txt"
     writer_system_prompt.write_text(f"Writer system {suffix}", encoding="utf-8")
