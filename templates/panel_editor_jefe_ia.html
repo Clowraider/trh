@@ -101,6 +101,20 @@
         background-color: var(--trh-primary-light) !important;
       }
 
+      /* Indicador de foto seleccionada */
+      .foto-radio input[type="radio"]:checked + img,
+      .foto-radio input[type="radio"]:checked + .noticia-sin-foto {
+        border: 4px solid var(--trh-primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.25);
+        filter: saturate(1.1) contrast(1.05);
+      }
+      .foto-secundaria input[type="checkbox"]:checked + img,
+      .foto-secundaria input[type="checkbox"]:checked + .noticia-sin-foto {
+        border: 4px solid var(--trh-success);
+        box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25);
+        filter: saturate(1.1) contrast(1.05);
+      }
+
       /* Dark mode overrides */
       [data-bs-theme="dark"] {
         --trh-bg: #0f172a;
