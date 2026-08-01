@@ -223,6 +223,10 @@
       [data-bs-theme="dark"] .text-muted {
         color: #94a3b8 !important;
       }
+      [data-bs-theme="dark"] .text-bg-light {
+        background-color: #334155 !important;
+        color: #f8fafc !important;
+      }
       [data-bs-theme="dark"] .bg-light {
         background-color: #1e293b !important;
       }
@@ -264,7 +268,7 @@
             <span class="badge bg-secondary meta-badge"
               >{{ cluster.cantidad_noticias }} noticias</span
             >
-            <span class="badge bg-light text-dark meta-badge"
+            <span class="badge text-bg-light meta-badge"
               >{{ cluster.cantidad_fuentes }} fuentes</span
             >
             <span class="estado-{{ estado }} badge bg-light border meta-badge">

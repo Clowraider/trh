@@ -238,7 +238,7 @@
             </div>
              <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
              <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
-             <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+             <span class="badge text-bg-light">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
              {% if item.cluster_keywords %}
                <div class="mt-2" style="font-size: 0.75rem">
                  {% for kw in item.cluster_keywords[:8] %}
@@ -308,7 +308,7 @@
               </div>
                <span class="badge bg-primary">Editorial {{ item.editorial_score }}</span>
                <span class="badge bg-secondary">Técnico {{ item.technical_score }}</span>
-               <span class="badge bg-light text-dark">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
+               <span class="badge text-bg-light">{{ item.news_count }} noticias / {{ item.source_count }} fuentes</span>
                {% if item.cluster_keywords %}
                  <div class="mt-2" style="font-size: 0.75rem">
                    {% for kw in item.cluster_keywords[:8] %}
