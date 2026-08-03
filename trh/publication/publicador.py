@@ -41,11 +41,10 @@ DB_NAME = os.getenv('DB_NAME', 'trh')
 DB_USER = os.getenv('DB_USER', 'postgres')
 DB_PASSWORD = os.getenv('DB_PASSWORD')
 
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
-OPENROUTER_URL = os.getenv('OPENROUTER_URL', 'https://openrouter.ai/api/v1/chat/completions')
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
+OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 
-MODEL_PRINCIPAL = os.getenv('OPENROUTER_MODEL_PRIMARY', 'openrouter/free')
-MODEL_FALLBACK = os.getenv('OPENROUTER_MODEL_FALLBACK', 'deepseek/deepseek-v4-flash')
+OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -233,7 +232,7 @@ def construir_prompt(noticias, nota_ia=''):
 
 
 # =============================================================================
-# LLAMAR A LA IA (OpenRouter)
+# LLAMAR A LA IA (OpenAI-compatible)
 # =============================================================================
 
 def _validar_contenido_generado(contenido):
@@ -244,57 +243,50 @@ def _validar_contenido_generado(contenido):
 
 
 def llamar_ia_json(prompt, system_prompt, max_tokens=2200, temperature=0.6, title="TRH Publicador"):
-    if not OPENROUTER_API_KEY:
-        raise RuntimeError('Falta OPENROUTER_API_KEY en entorno (.env)')
+    if not OPENAI_API_KEY:
+        raise RuntimeError('Falta OPENAI_API_KEY en entorno (.env)')
 
-    models = [MODEL_PRINCIPAL, MODEL_FALLBACK]
+    modelo = OPENAI_MODEL
+    try:
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
 
-    for modelo in models:
-        try:
-            headers = {
-                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://trh.local",
-                "X-Title": title
-            }
+        data = {
+            "model": modelo,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"}
+        }
 
-            data = {
-                "model": modelo,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-                "response_format": {"type": "json_object"}
-            }
+        response = requests.post(
+            f"{OPENAI_BASE_URL}/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=70
+        )
 
-            response = requests.post(
-                OPENROUTER_URL,
-                headers=headers,
-                json=data,
-                timeout=70
-            )
+        response.raise_for_status()
+        result = response.json()
+        contenido = result['choices'][0]['message']['content'].strip()
+        return json.loads(contenido)
 
-            if response.status_code == 429:
-                logger.warning("Cuota excedida en %s", modelo)
-                continue
+    except (requests.Timeout, requests.ConnectionError) as e:
+        logger.warning("Error de red con la IA: %s", e)
+    except json.JSONDecodeError:
+        logger.warning("La IA no devolvió JSON válido")
+    except ValueError as e:
+        logger.warning("Respuesta inválida de la IA: %s", e)
+    except Exception as e:
+        logger.warning("Error con la IA: %s", e)
 
-            response.raise_for_status()
-            result = response.json()
-            contenido = result['choices'][0]['message']['content'].strip()
-            return json.loads(contenido)
-
-        except (requests.Timeout, requests.ConnectionError) as e:
-            logger.warning("Error de red con %s: %s", modelo, e)
-        except json.JSONDecodeError:
-            logger.warning("La IA no devolvió JSON válido con %s", modelo)
-        except ValueError as e:
-            logger.warning("Respuesta inválida con %s: %s", modelo, e)
-        except Exception as e:
-            logger.warning("Error con modelo %s: %s", modelo, e)
-
-    raise Exception("Todos los modelos de IA fallaron")
+    raise Exception("El proveedor de IA falló")
 
 
 def llamar_ia(prompt):

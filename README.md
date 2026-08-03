@@ -117,7 +117,7 @@ Antes de correr el instalador:
 
 - **PostgreSQL con `pgvector`**. Sin esta extensión no funciona la similitud ni el clustering.
 - **Usuario normal**, no root. El script usa `sudo` solo cuando necesita paquetes del sistema.
-- **API key de OpenRouter** con saldo disponible.
+- **API key de un proveedor compatible con OpenAI** (OpenAI, DeepSeek, etc.) con saldo disponible.
 - **WordPress** con URL, usuario y **Application Password** lista.
 - **Modelo de embeddings local y estable**. Preferentemente un modelo local, guardado como artefacto crítico: si cambia el modelo, cambian los vectores y se pierde consistencia histórica.
 
@@ -267,7 +267,7 @@ Archivos listos para copiar en `deploy/`:
 ### Fallos por credenciales o variables faltantes
 
 - Ejecutar `./scripts/check_env.sh`.
-- Confirmar `.env` completo (DB, OpenRouter, WordPress).
+- Confirmar `.env` completo (DB, proveedor compatible con OpenAI, WordPress).
 
 ### El pipeline no corre
 

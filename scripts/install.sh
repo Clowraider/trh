@@ -303,7 +303,7 @@ merge_env_file() {
         DB_NAME) printf 'DB_NAME=%s\n' "$DB_NAME_VALUE" >>"$output_file" ;;
         DB_USER) printf 'DB_USER=%s\n' "$DB_USER_VALUE" >>"$output_file" ;;
         DB_PASSWORD) printf 'DB_PASSWORD=%s\n' "$DB_PASSWORD_VALUE" >>"$output_file" ;;
-        OPENROUTER_API_KEY) printf 'OPENROUTER_API_KEY=%s\n' "$OPENROUTER_API_KEY_VALUE" >>"$output_file" ;;
+        OPENAI_API_KEY) printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY_VALUE" >>"$output_file" ;;
         WP_URL) printf 'WP_URL=%s\n' "$WP_URL_VALUE" >>"$output_file" ;;
         WP_USERNAME) printf 'WP_USERNAME=%s\n' "$WP_USERNAME_VALUE" >>"$output_file" ;;
         WP_APP_PASSWORD) printf 'WP_APP_PASSWORD=%s\n' "$WP_APP_PASSWORD_VALUE" >>"$output_file" ;;
@@ -337,7 +337,7 @@ prepare_env_file() {
   fi
 
   local current_db_host current_db_port current_db_name current_db_user current_db_password
-  local current_openrouter_key current_wp_url current_wp_username current_wp_app_password
+  local current_openai_key current_wp_url current_wp_username current_wp_app_password
   local current_ollama_url current_embedding_model
 
   current_db_host=$(read_env_value "$ENV_FILE" "DB_HOST")
@@ -345,7 +345,7 @@ prepare_env_file() {
   current_db_name=$(read_env_value "$ENV_FILE" "DB_NAME")
   current_db_user=$(read_env_value "$ENV_FILE" "DB_USER")
   current_db_password=$(read_env_value "$ENV_FILE" "DB_PASSWORD")
-  current_openrouter_key=$(read_env_value "$ENV_FILE" "OPENROUTER_API_KEY")
+  current_openai_key=$(read_env_value "$ENV_FILE" "OPENAI_API_KEY")
   current_wp_url=$(read_env_value "$ENV_FILE" "WP_URL")
   current_wp_username=$(read_env_value "$ENV_FILE" "WP_USERNAME")
   current_wp_app_password=$(read_env_value "$ENV_FILE" "WP_APP_PASSWORD")
@@ -360,7 +360,7 @@ prepare_env_file() {
   prompt_text "DB_NAME" "DB_NAME" "Nombre de la base de datos que va a usar la app." "${current_db_name:-$(read_env_value "$TEMPLATE_FILE" "DB_NAME")}"; DB_NAME_VALUE=$PROMPT_VALUE
   prompt_text "DB_USER" "DB_USER" "Usuario con permisos para conectarse y crear la base si hace falta." "${current_db_user:-$(read_env_value "$TEMPLATE_FILE" "DB_USER")}"; DB_USER_VALUE=$PROMPT_VALUE
   prompt_secret "DB_PASSWORD" "DB_PASSWORD" "Contraseña del usuario de PostgreSQL indicado arriba." "${current_db_password:-$(read_env_value "$TEMPLATE_FILE" "DB_PASSWORD")}"; DB_PASSWORD_VALUE=$PROMPT_VALUE
-  prompt_secret "OPENROUTER_API_KEY" "OPENROUTER_API_KEY" "Clave de OpenRouter para habilitar las integraciones del proyecto." "${current_openrouter_key:-$(read_env_value "$TEMPLATE_FILE" "OPENROUTER_API_KEY")}"; OPENROUTER_API_KEY_VALUE=$PROMPT_VALUE
+  prompt_secret "OPENAI_API_KEY" "OPENAI_API_KEY" "Clave de API para el proveedor compatible con OpenAI (OpenAI, DeepSeek, etc.)." "${current_openai_key:-$(read_env_value "$TEMPLATE_FILE" "OPENAI_API_KEY")}"; OPENAI_API_KEY_VALUE=$PROMPT_VALUE
   prompt_text "WP_URL" "WP_URL" "URL base de tu sitio WordPress, incluyendo https://." "${current_wp_url:-$(read_env_value "$TEMPLATE_FILE" "WP_URL")}"; WP_URL_VALUE=$PROMPT_VALUE
   prompt_text "WP_USERNAME" "WP_USERNAME" "Usuario de WordPress con permisos para la integración." "${current_wp_username:-$(read_env_value "$TEMPLATE_FILE" "WP_USERNAME")}"; WP_USERNAME_VALUE=$PROMPT_VALUE
   prompt_secret "WP_APP_PASSWORD" "WP_APP_PASSWORD" "Contraseña de aplicación de WordPress. Se crea en Usuarios > Perfil > Application Passwords y se pega tal como la muestra WordPress." "${current_wp_app_password:-$(read_env_value "$TEMPLATE_FILE" "WP_APP_PASSWORD")}"; WP_APP_PASSWORD_VALUE=$PROMPT_VALUE

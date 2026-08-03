@@ -19,7 +19,7 @@ def candidate(
     return {
         "cluster_id": cluster_id, "title": title, "technical_score": 4.0,
         "editorial_score": editorial_score, "news_count": 3, "source_count": 2,
-        "newest_at": newest_at, "keywords": ["economía"],
+        "newest_at": newest_at,
         "recent_news": [{"title": "Nota", "source": "Medio",
                          "effective_at": newest_at, "excerpt": "Contexto"}],
     }
@@ -169,10 +169,10 @@ def test_all_failed_batches_return_failure_metadata_not_zero():
 
 def test_missing_provider_configuration_fails_fast_across_batches(caplog):
     post_calls = []
-    client = feature.OpenRouterSelectionClient(
+    client = feature.OpenAICompatibleSelectionClient(
         post=lambda *_args, **_kwargs: post_calls.append("called"),
         api_key="",
-        models=("safe-model",),
+        model="safe-model",
     )
 
     with caplog.at_level("WARNING", logger=feature.__name__):
@@ -197,8 +197,8 @@ def test_missing_provider_configuration_fails_fast_across_batches(caplog):
     {"selections": [{"cluster_id": 1, "reason": "ok"}, {"cluster_id": 1, "reason": "again"}]},
     {"selections": [{"cluster_id": 1, "reason": " "}]},
     {"selections": [{"cluster_id": 1, "reason": "bad\nreason"}]},
-    {"selections": [{"cluster_id": 1, "reason": "x" * 241}]},
-])
+        {"selections": [{"cluster_id": 1, "reason": "x" * 501}]},
+    ])
 def test_validation_fails_closed(body):
     with pytest.raises(feature.FeatureError):
         feature.validate_selection_response(body, [candidate()], 1)
@@ -215,7 +215,7 @@ def test_validation_enforces_ceiling_and_restores_server_order():
     assert result[1]["reason"] == "second"
 
 
-def test_openrouter_client_uses_publicador_transport_policy():
+def test_openai_compatible_client_uses_expected_transport_policy():
     calls = []
 
     class Response:
@@ -228,12 +228,15 @@ def test_openrouter_client_uses_publicador_transport_policy():
     def post(url, **kwargs):
         calls.append((url, kwargs)); return Response()
 
-    client = feature.OpenRouterSelectionClient(
-        post=post, api_key="secret", models=("one", "two"), sleep=lambda _: None
+    client = feature.OpenAICompatibleSelectionClient(
+        post=post, api_key="secret", model="one",
+        url="https://api.openai.com/v1", sleep=lambda _: None,
     )
+    assert client.url == "https://api.openai.com/v1"
     assert client.select("{}") == {"selections": []}
     request = calls[0][1]["json"]
     headers = calls[0][1]["headers"]
+    assert calls[0][0] == "https://api.openai.com/v1/chat/completions"
     assert request["model"] == "one"
     assert request["messages"][0]["content"] == feature.EDITOR_JEFE_SYSTEM_PROMPT
     assert request["max_tokens"] == 1200
@@ -241,64 +244,31 @@ def test_openrouter_client_uses_publicador_transport_policy():
     assert calls[0][1]["timeout"] == 70
     assert headers == {
         "Authorization": "Bearer secret", "Content-Type": "application/json",
-        "HTTP-Referer": "https://trh.local", "X-Title": "TRH Editor Jefe IA",
+        "Accept": "application/json",
     }
     assert calls[-1] == "raise_for_status"
 
 
-def test_openrouter_skips_to_next_model_after_429_without_retry():
-    calls, sleeps = [], []
+def test_openai_compatible_client_fails_feature_error_on_non_2xx_without_fallback():
+    calls = []
 
     class Response:
-        def __init__(self, status_code, content=None):
-            self.status_code, self.content = status_code, content
+        status_code = 429
         def raise_for_status(self):
-            if self.status_code >= 400:
-                raise feature.requests.HTTPError(str(self.status_code))
+            raise feature.requests.HTTPError("429")
         def json(self):
-            return {"choices": [{"message": {"content": self.content}}]}
+            return {"choices": [{"message": {"content": '{"selections":[]}'}}]}
 
-    outcomes = [Response(429), Response(200, '{"selections":[]}')]
-    def post(_url, **kwargs):
-        calls.append(kwargs["json"]["model"])
-        outcome = outcomes.pop(0)
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
+    def post(url, **kwargs):
+        calls.append((url, kwargs["json"]["model"])); return Response()
 
-    client = feature.OpenRouterSelectionClient(
-        post=post, api_key="secret", models=("one", "two"), sleep=sleeps.append
+    client = feature.OpenAICompatibleSelectionClient(
+        post=post, api_key="secret", model="only-model",
+        url="https://api.openai.com/v1", sleep=lambda _: None,
     )
-    assert client.select("{}") == {"selections": []}
-    assert calls == ["one", "two"]
-    assert sleeps == []
-
-
-def test_openrouter_falls_back_after_http_or_malformed_json():
-    calls, sleeps = [], []
-
-    class Response:
-        def __init__(self, status_code=200, content=None):
-            self.status_code, self.content = status_code, content
-        def raise_for_status(self):
-            if self.status_code >= 400:
-                raise feature.requests.HTTPError(str(self.status_code))
-        def json(self):
-            if self.content == "malformed":
-                return {"choices": [{"message": {"content": "not-json"}}]}
-            return {"choices": [{"message": {"content": self.content}}]}
-
-    outcomes = [Response(500), Response(content='{"selections":[]}')]
-    def post(_url, **kwargs):
-        calls.append(kwargs["json"]["model"])
-        return outcomes.pop(0)
-
-    client = feature.OpenRouterSelectionClient(
-        post=post, api_key="secret", models=("one", "two"), sleep=sleeps.append
-    )
-    assert client.select("{}") == {"selections": []}
-    assert calls == ["one", "two"]
-    assert sleeps == []
+    with pytest.raises(feature.FeatureError):
+        client.select("{}")
+    assert calls == [("https://api.openai.com/v1/chat/completions", "only-model")]
 
 
 def test_provider_and_validation_logs_are_structured_and_secret_safe(caplog):
@@ -316,10 +286,10 @@ def test_provider_and_validation_logs_are_structured_and_secret_safe(caplog):
         def json(self):
             return {"raw": raw_response}
 
-    client = feature.OpenRouterSelectionClient(
+    client = feature.OpenAICompatibleSelectionClient(
         post=lambda *_args, **_kwargs: Response(),
         api_key=secret,
-        models=("safe-model",),
+        model="safe-model",
     )
     with caplog.at_level("WARNING", logger=feature.__name__):
         with pytest.raises(feature.FeatureError):
@@ -339,7 +309,7 @@ def test_provider_and_validation_logs_are_structured_and_secret_safe(caplog):
 
 @pytest.mark.parametrize(("reason", "expected_category", "sensitive_content"), [
     ("   ", "reason_empty", "selections"),
-    ("sensitive-too-long-" + "x" * 240, "reason_too_long", "sensitive-too-long"),
+    ("sensitive-too-long-" + "x" * 500, "reason_too_long", "sensitive-too-long"),
     (
         "sensitive-control\x00character",
         "reason_control_character",
@@ -363,15 +333,15 @@ def test_invalid_reason_logs_exact_safe_category_without_content(
     assert reason not in caplog.text
 
 
-def test_openrouter_missing_choice_fails_as_generic_feature_error():
+def test_openai_compatible_missing_choice_fails_as_generic_feature_error():
     class Response:
         status_code = 200
         def raise_for_status(self):
             return None
         def json(self):
             return {"choices": []}
-    client = feature.OpenRouterSelectionClient(
-        post=lambda *args, **kwargs: Response(), api_key="secret", models=("one",),
+    client = feature.OpenAICompatibleSelectionClient(
+        post=lambda *args, **kwargs: Response(), api_key="secret", model="one",
         sleep=lambda _: None,
     )
     with pytest.raises(feature.FeatureError):
@@ -381,11 +351,11 @@ def test_openrouter_missing_choice_fails_as_generic_feature_error():
 def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
     import app as panel
     calls = []
-    candidates = [{**candidate(editorial_score=80), "keywords": ["economía", "Otra"]}]
+    candidates = [candidate(editorial_score=80)]
     saved = []
 
-    def builder(factory, keyword_loader):
-        calls.append((factory, keyword_loader)); return candidates
+    def builder(factory):
+        calls.append((factory,)); return candidates
 
     def load_saved(_factory):
         return list(saved)
@@ -409,6 +379,7 @@ def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
                     EDITOR_JEFE_LOAD_SAVED_RECOMMENDATIONS=load_saved,
                     EDITOR_JEFE_SAVE_RECOMMENDATIONS=save_saved)
     client = panel.app.test_client()
+
     get_response = client.get("/editor-jefe-ia")
     assert get_response.status_code == 200 and calls == []
     assert f'value="{DEFAULT_MINIMUM_EDITORIAL_SCORE}"'.encode() in get_response.data
@@ -420,23 +391,18 @@ def test_get_and_post_show_and_persist_saved_recommendations(monkeypatch):
     assert response.status_code == 200
     assert "no-store" in response.headers["Cache-Control"]
     assert "no-store" in get_response.headers["Cache-Control"]
-    assert calls == [(factory, panel.obtener_keywords_por_clusters_ids)]
+    assert calls == [(factory,)]
     assert b"Relevant" in response.data and b"guardadas" in response.data
     assert b"Descartar" in response.data
     assert b"return_to" in response.data
     assert b"/descartar/1" in response.data
     assert b"Propuestas guardadas" in response.data
     html = response.get_data(as_text=True)
-    assert html.count('data-priority-keyword="true"') == 2
-    assert html.count('data-priority-keyword="false"') == 2
-    assert re.search(r'Nuevas recomendaciones[\s\S]*data-priority-keyword="true"[\s\S]*>\s*economía\s*<', html)
-    assert re.search(r'Propuestas guardadas[\s\S]*data-priority-keyword="false"[\s\S]*>\s*Otra\s*<', html)
     assert "Location" not in response.headers
     assert response.headers.getlist("Set-Cookie") == []
     followup_get = client.get("/editor-jefe-ia")
     assert b"Relevant" in followup_get.data
     assert b"Propuestas guardadas" in followup_get.data
-
 
 @pytest.mark.parametrize("maximum", ["abc", "1.5", "0", "-1"])
 def test_invalid_maximum_explains_positive_whole_number_without_dependencies(maximum):
@@ -1371,8 +1337,7 @@ def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatc
                         ("obtener_keywords_por_cluster", {7: []}), ("obtener_prioridades", [])):
         monkeypatch.setattr(feature, name, loader(value))
     monkeypatch.setattr(feature, "calcular_score_editorial", lambda *_: {"score_final": 51})
-    monkeypatch.setattr(panel, "obtener_keywords_por_clusters_ids",
-                        lambda used, _ids: (seams.append(used) or {7: ["mapped"]}))
+    monkeypatch.setattr(panel, "obtener_keywords_por_clusters_ids", lambda _used, _ids: {})
     client = type("Client", (), {"select": lambda _, payload:
                   (payloads.append(json.loads(payload)) or {"selections": []})})
     configure_panel(panel, EDITOR_JEFE_CONTEXT_BUILDER=feature.build_editorial_context,
@@ -1382,8 +1347,9 @@ def test_real_context_to_provider_to_html_supports_empty_ai_selection(monkeypatc
         data={"maximum": "1", "minimum_editorial_score": DEFAULT_MINIMUM_EDITORIAL_SCORE},
     )
     assert response.status_code == 200 and b"resultado v\xc3\xa1lido" in response.data
-    assert factory_calls == [True] and seams == [conn] * 4
+    assert factory_calls == [True] and seams == [conn] * 3
     assert payloads[0]["candidates"][0]["title"] == "Mapped cluster"
+    assert "keywords" not in payloads[0]["candidates"][0]
 
 
 def test_build_cluster_keywords_for_panel_marks_priority_keywords_with_normalization():
@@ -1544,10 +1510,10 @@ def test_failure_observability_uses_safe_categories_only(caplog):
     failures = (
         lambda: feature.serialize_selection_payload([candidate(title="secret prompt" * 5000)], 1),
         lambda: feature.validate_selection_response({"secret output": "raw"}, [candidate()], 1),
-        lambda: feature.OpenRouterSelectionClient(
+        lambda: feature.OpenAICompatibleSelectionClient(
             post=lambda *_a, **_k: (_ for _ in ()).throw(
                 feature.requests.ConnectionError("sensitive provider exception")),
-            api_key="secret-key", models=("one",), sleep=lambda _: None).select("secret prompt"),
+            api_key="secret-key", model="one", sleep=lambda _: None).select("secret prompt"),
     )
     with caplog.at_level("WARNING"):
         for failure in failures:

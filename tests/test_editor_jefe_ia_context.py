@@ -139,15 +139,14 @@ def test_eligibility_score_connection_and_ranked_news_are_read_only(score_inputs
         factory_calls.append(True)
         return conn
 
-    keywords = {10: ["economia"], 20: ["mundo"]}
-    result = feature.build_editorial_context(factory, lambda used_conn, ids: keywords)
+    result = feature.build_editorial_context(factory)
 
     assert factory_calls == [True]
     assert loader_connections == [conn, conn, conn]
     assert conn.closed
     assert [item["cluster_id"] for item in result] == [20, 10]
-    assert result[0]["keywords"] == ["mundo"]
-    assert result[1]["keywords"] == ["economia"]
+    assert "keywords" not in result[0]
+    assert "keywords" not in result[1]
     expected = scoring.calcular_score_editorial(
         {"id": 10, **eligible[0]}, recent[10], score_keywords[10], priorities
     )["score_final"]
@@ -172,7 +171,7 @@ def test_eligibility_score_connection_and_ranked_news_are_read_only(score_inputs
     assert len(conn.queries) == 2
 
 
-def test_context_normalizes_and_bounds_cluster_keywords_and_news(score_inputs):
+def test_context_normalizes_and_bounds_cluster_news(score_inputs):
     t = datetime(2026, 3, 7, 11, 30, tzinfo=timezone.utc)
     eligible = [cluster(
         10, t, titulo_representativo="  A\n" + "é" * 400,
@@ -183,16 +182,13 @@ def test_context_normalizes_and_bounds_cluster_keywords_and_news(score_inputs):
         texto_completo="  α\n\t" + "β" * 700,
     )]
     conn = ReadOnlyConnection(eligible, ranked_news)
-    raw_keywords = [" z ", "", "a", "a ", "b" * 130, "y", "x", "w", "v", "u"]
 
-    result = feature.build_editorial_context(
-        lambda: conn, lambda _conn, _ids: {10: raw_keywords}
-    )
+    result = feature.build_editorial_context(lambda: conn)
     candidate = result[0]
 
     assert candidate["title"] == ("A " + "é" * 400)[:300]
     assert candidate["technical_score"] == 0.0
-    assert candidate["keywords"] == sorted({k.strip()[:120] for k in raw_keywords if k.strip()})[:8]
+    assert "keywords" not in candidate
     item = candidate["recent_news"][0]
     assert item["title"] == ""
     assert item["source"] == ("S " + "x" * 150)[:100]
@@ -208,15 +204,13 @@ def test_null_cluster_title_falls_back_and_invalid_timestamp_fails_closed(score_
     )
 
     with pytest.raises(ValueError, match="effective timestamp"):
-        feature.build_editorial_context(lambda: conn, lambda _conn, _ids: {10: []})
+        feature.build_editorial_context(lambda: conn)
     assert conn.closed
 
     clean_conn = ReadOnlyConnection(
         [cluster(10, valid_time, titulo_representativo=None)],
         [news(1, 10, valid_time, texto_completo=None)],
     )
-    candidate = feature.build_editorial_context(
-        lambda: clean_conn, lambda _conn, _ids: {10: []}
-    )[0]
+    candidate = feature.build_editorial_context(lambda: clean_conn)[0]
     assert candidate["title"] == "(Sin título)"
     assert candidate["recent_news"][0]["excerpt"] == ""

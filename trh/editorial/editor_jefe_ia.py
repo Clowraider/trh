@@ -77,15 +77,6 @@ def _normalized_text(value, limit, fallback=""):
     return (normalized or fallback)[:limit]
 
 
-def _normalized_keywords(values):
-    bounded = {
-        normalized[:120]
-        for value in values
-        if (normalized := _normalized_text(value, 120))
-    }
-    return sorted(bounded)[:8]
-
-
 def _serialize_timestamp(value, label):
     if value is None:
         raise ValueError(f"Missing {label} timestamp")
@@ -104,7 +95,7 @@ def _load_recent_news(conn, cluster_ids):
         return cursor.fetchall()
 
 
-def build_editorial_context(connection_factory, panel_keywords_loader):
+def build_editorial_context(connection_factory):
     """Return deterministic, bounded candidate mappings using read-only queries."""
     conn = connection_factory()
     try:
@@ -119,7 +110,6 @@ def build_editorial_context(connection_factory, panel_keywords_loader):
         score_keywords = obtener_keywords_por_cluster(conn)
         priorities = obtener_prioridades(conn)
         cluster_ids = [row["cluster_id"] for row in clusters]
-        panel_keywords = panel_keywords_loader(conn, cluster_ids)
         news_rows = _load_recent_news(conn, cluster_ids)
 
         news_by_cluster = {}
@@ -163,7 +153,6 @@ def build_editorial_context(connection_factory, panel_keywords_loader):
                 "news_count": row["cantidad_noticias"],
                 "source_count": row["cantidad_fuentes"],
                 "newest_at": _serialize_timestamp(row.get("newest_at"), "cluster newest"),
-                "keywords": _normalized_keywords(panel_keywords.get(cluster_id, [])),
                 "recent_news": news_by_cluster.get(cluster_id, []),
             })
 
@@ -288,7 +277,7 @@ def validate_selection_response(body, candidates, maximum):
         reason = reason.strip()
         if not reason:
             raise invalid("reason_empty")
-        if len(reason) > 240:
+        if len(reason) > 500:
             raise invalid("reason_too_long")
         if any(unicodedata.category(char) == "Cc" for char in reason):
             raise invalid("reason_control_character")
@@ -297,17 +286,14 @@ def validate_selection_response(body, candidates, maximum):
             for item in candidates if item["cluster_id"] in reasons]
 
 
-class OpenRouterSelectionClient:
-    def __init__(self, post=requests.post, api_key=None, models=None, sleep=time.sleep):
+class OpenAICompatibleSelectionClient:
+    def __init__(self, post=requests.post, api_key=None, model=None, url=None, sleep=time.sleep):
         self.post = post
         self.sleep = sleep
-        self.api_key = api_key if api_key is not None else os.getenv("OPENROUTER_API_KEY")
-        self.models = models or (
-            os.getenv("OPENROUTER_MODEL_PRIMARY", "openrouter/free"),
-            os.getenv("OPENROUTER_MODEL_FALLBACK", "deepseek/deepseek-v4-flash"),
-        )
-        self.url = os.getenv(
-            "OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions"
+        self.api_key = api_key if api_key is not None else os.getenv("OPENAI_API_KEY")
+        self.model = model or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self.url = url or os.getenv(
+            "OPENAI_BASE_URL", "https://api.openai.com/v1"
         )
 
     def select(self, payload):
@@ -315,7 +301,7 @@ class OpenRouterSelectionClient:
             logger.warning(
                 "editor_jefe.provider_unavailable model=%s "
                 "error_category=configuration http_status=none",
-                self.models[0] if self.models else "none",
+                self.model,
             )
             raise FeatureError(
                 "Selection provider unavailable", "provider_configuration_failure"
@@ -323,49 +309,41 @@ class OpenRouterSelectionClient:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://trh.local",
-            "X-Title": "TRH Editor Jefe IA",
+            "Accept": "application/json",
         }
-        for model in self.models:
-            response = None
-            try:
-                response = self.post(
-                    self.url, headers=headers,
-                    json={"model": model, "messages": [
-                        {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
-                        {"role": "user", "content": payload},
-                    ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
-                          "response_format": {"type": "json_object"}}, timeout=70,
-                )
-                if response.status_code == 429:
-                    logger.warning(
-                        "editor_jefe.provider_attempt_failed model=%s "
-                        "error_category=rate_limit http_status=429", model,
-                    )
-                    continue
-                response.raise_for_status()
-                content = response.json()["choices"][0]["message"]["content"]
-                return json.loads(content.strip())
-            except requests.RequestException as error:
-                error_response = getattr(error, "response", None)
-                status_source = response if response is not None else error_response
-                http_status = getattr(status_source, "status_code", None)
-                logger.warning(
-                    "editor_jefe.provider_attempt_failed model=%s "
-                    "error_category=http_error http_status=%s", model, http_status,
-                )
-            except ValueError:
-                logger.warning(
-                    "editor_jefe.provider_attempt_failed model=%s "
-                    "error_category=malformed_response http_status=%s",
-                    model, getattr(response, "status_code", None),
-                )
-            except (IndexError, KeyError, TypeError):
-                logger.warning(
-                    "editor_jefe.provider_attempt_failed model=%s "
-                    "error_category=response_schema http_status=%s",
-                    model, getattr(response, "status_code", None),
-                )
+        response = None
+        try:
+            response = self.post(
+                f"{self.url}/chat/completions", headers=headers,
+                json={"model": self.model, "messages": [
+                    {"role": "system", "content": EDITOR_JEFE_SYSTEM_PROMPT},
+                    {"role": "user", "content": payload},
+                ], "temperature": 0, "max_tokens": RESPONSE_TOKEN_LIMIT,
+                      "response_format": {"type": "json_object"}}, timeout=70,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            return json.loads(content.strip())
+        except requests.RequestException as error:
+            error_response = getattr(error, "response", None)
+            status_source = response if response is not None else error_response
+            http_status = getattr(status_source, "status_code", None)
+            logger.warning(
+                "editor_jefe.provider_attempt_failed model=%s "
+                "error_category=http_error http_status=%s", self.model, http_status,
+            )
+        except ValueError:
+            logger.warning(
+                "editor_jefe.provider_attempt_failed model=%s "
+                "error_category=malformed_response http_status=%s",
+                self.model, getattr(response, "status_code", None),
+            )
+        except (IndexError, KeyError, TypeError):
+            logger.warning(
+                "editor_jefe.provider_attempt_failed model=%s "
+                "error_category=response_schema http_status=%s",
+                self.model, getattr(response, "status_code", None),
+            )
         raise FeatureError("Selection provider unavailable", "provider_failure")
 
 

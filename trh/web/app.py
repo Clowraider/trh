@@ -28,7 +28,7 @@ from flask import (
 from PIL import Image
 from pipeline.seleccionar_publicables import get_connection, generar_candidatos
 from trh.editorial.editor_jefe_ia import (
-    FeatureError, OpenRouterSelectionClient, build_editorial_context,
+    FeatureError, OpenAICompatibleSelectionClient, build_editorial_context,
     delete_saved_recommendation, load_saved_recommendations, parse_maximum,
     parse_minimum_editorial_score, record_context_failure, save_recommendations,
     select_recommendations,
@@ -892,13 +892,13 @@ def editor_jefe_ia():
                 recommended_ids = {item["cluster_id"] for item in saved_recommendations}
                 candidates = [
                     candidate
-                    for candidate in builder(connection_factory, obtener_keywords_por_clusters_ids)
+                    for candidate in builder(connection_factory)
                     if candidate["cluster_id"] not in recommended_ids
                     and candidate["editorial_score"] >= parsed_minimum_score
                 ]
                 if candidates:
                     client_factory = app.config.get(
-                        "EDITOR_JEFE_CLIENT_FACTORY", OpenRouterSelectionClient
+                        "EDITOR_JEFE_CLIENT_FACTORY", OpenAICompatibleSelectionClient
                     )
                     outcome = select_recommendations(
                         candidates, parsed_maximum, client_factory()
