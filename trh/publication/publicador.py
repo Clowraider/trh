@@ -26,6 +26,7 @@ from string import Template
 from datetime import datetime
 from psycopg2.extras import RealDictCursor
 
+from trh.infrastructure.ai_response_parser import extract_json_object
 from trh.infrastructure.env_loader import load_project_env
 from trh.infrastructure.prompt_loader import load_json_file, load_prompt_text
 
@@ -45,6 +46,7 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 OPENAI_BASE_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+ARTICLE_WRITER_MAX_TOKENS = int(os.getenv('ARTICLE_WRITER_MAX_TOKENS', '4000'))
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -242,7 +244,19 @@ def _validar_contenido_generado(contenido):
         raise ValueError(f"Respuesta IA incompleta. Faltan campos: {', '.join(faltantes)}")
 
 
-def llamar_ia_json(prompt, system_prompt, max_tokens=2200, temperature=0.6, title="TRH Publicador"):
+def _is_likely_truncated_response(content):
+    if not isinstance(content, str) or not content.strip():
+        return False
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        cleaned = "\n".join(
+            line for line in cleaned.splitlines()
+            if not line.strip().startswith("```")
+        ).strip()
+    return cleaned.startswith("{") and not cleaned.rstrip().endswith("}")
+
+
+def llamar_ia_json(prompt, system_prompt, max_tokens=ARTICLE_WRITER_MAX_TOKENS, temperature=0.6, title="TRH Publicador"):
     if not OPENAI_API_KEY:
         raise RuntimeError('Falta OPENAI_API_KEY en entorno (.env)')
 
@@ -275,14 +289,16 @@ def llamar_ia_json(prompt, system_prompt, max_tokens=2200, temperature=0.6, titl
         response.raise_for_status()
         result = response.json()
         contenido = result['choices'][0]['message']['content'].strip()
-        return json.loads(contenido)
+        return extract_json_object(contenido)
 
     except (requests.Timeout, requests.ConnectionError) as e:
         logger.warning("Error de red con la IA: %s", e)
-    except json.JSONDecodeError:
-        logger.warning("La IA no devolvió JSON válido")
-    except ValueError as e:
-        logger.warning("Respuesta inválida de la IA: %s", e)
+    except (json.JSONDecodeError, ValueError) as e:
+        preview = repr(contenido[:240] if isinstance(contenido, str) else "")
+        if _is_likely_truncated_response(contenido):
+            logger.warning("La respuesta de la IA parece estar truncada: %s preview=%s", e, preview)
+        else:
+            logger.warning("La IA no devolvió JSON válido: %s preview=%s", e, preview)
     except Exception as e:
         logger.warning("Error con la IA: %s", e)
 
@@ -298,19 +314,47 @@ def llamar_ia(prompt):
     return parsed
 
 
-def set_requiere_revision_editorial(cluster_id, requiere_revision):
+def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=None):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                """
-                    UPDATE clusters_editoriales
-                    SET requiere_revision_editorial = %s,
-                        actualizado_en = NOW()
-                    WHERE id = %s
-                """,
-                (requiere_revision, cluster_id),
-            )
+            if requiere_revision and nota_editor:
+                cur.execute(
+                    """
+                        SELECT nota_editor
+                        FROM clusters_editoriales
+                        WHERE id = %s
+                        FOR UPDATE
+                    """,
+                    (cluster_id,),
+                )
+                row = cur.fetchone()
+                existing = (row.get("nota_editor") or "") if row else ""
+                separator = "\n\n---\n\n" if existing.strip() else ""
+                updated = f"{existing}{separator}{nota_editor}".strip()
+                # Keep a generous but bounded size so the textarea remains usable.
+                if len(updated) > 4000:
+                    updated = updated[-4000:]
+                cur.execute(
+                    """
+                        UPDATE clusters_editoriales
+                        SET requiere_revision_editorial = %s,
+                            nota_editor = %s,
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """,
+                    (True, updated, cluster_id),
+                )
+            else:
+                cur.execute(
+                    """
+                        UPDATE clusters_editoriales
+                        SET requiere_revision_editorial = %s,
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """,
+                    (requiere_revision, cluster_id),
+                )
         conn.commit()
     finally:
         conn.close()

@@ -16,6 +16,10 @@ class RecordingCursor:
     def execute(self, sql, params=None):
         self.connection.executed.append((sql, params))
 
+    def fetchone(self):
+        results = self.connection.results[len(self.connection.executed) - 1]
+        return results[0] if results else None
+
 
 class FailingCursor(RecordingCursor):
     def execute(self, sql, params=None):
@@ -105,6 +109,26 @@ def test_set_requiere_revision_editorial_updates_current_schema(monkeypatch):
     assert conn.closed
     assert "SET requiere_revision_editorial = %s" in conn.executed[0][0]
     assert conn.executed[0][1] == (True, 23)
+
+
+def test_set_requiere_revision_editorial_appends_note_when_provided(monkeypatch):
+    conn = RecordingConnection()
+    conn.results = [[{"nota_editor": "Nota previa"}]]
+
+    monkeypatch.setattr(publicador, "get_connection", lambda: conn)
+
+    publicador.set_requiere_revision_editorial(23, True, nota_editor="Nueva razón")
+
+    assert conn.commit_count == 1
+    assert conn.closed
+    assert len(conn.executed) == 2  # SELECT + UPDATE
+    assert "SELECT nota_editor" in conn.executed[0][0]
+    assert "UPDATE clusters_editoriales" in conn.executed[1][0]
+    params = conn.executed[1][1]
+    assert params[0] is True
+    assert "Nota previa" in params[1]
+    assert "Nueva razón" in params[1]
+    assert params[2] == 23
 
 
 def test_set_requiere_revision_editorial_propagates_missing_schema_errors(monkeypatch):

@@ -249,6 +249,71 @@ def test_openai_compatible_client_uses_expected_transport_policy():
     assert calls[-1] == "raise_for_status"
 
 
+def test_openai_compatible_client_extracts_json_from_markdown_fence():
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"choices": [{"message": {"content": '```json\n{"selections":[]}\n```'}}]}
+
+    client = feature.OpenAICompatibleSelectionClient(
+        post=lambda *args, **kwargs: Response(), api_key="secret", model="one",
+        sleep=lambda _: None,
+    )
+    assert client.select("{}") == {"selections": []}
+
+
+def test_openai_compatible_client_extracts_json_without_markdown_label():
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"choices": [{"message": {"content": '```\n{"selections":[{"cluster_id":1,"reason":"ok"}]}\n```'}}]}
+
+    client = feature.OpenAICompatibleSelectionClient(
+        post=lambda *args, **kwargs: Response(), api_key="secret", model="one",
+        sleep=lambda _: None,
+    )
+    assert client.select("{}") == {"selections": [{"cluster_id": 1, "reason": "ok"}]}
+
+
+def test_openai_compatible_client_extracts_json_from_preamble_and_postamble():
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"choices": [{"message": {"content": 'Claro, aquí tienes la selección:\n{"selections":[{"cluster_id":1,"reason":"ok"}]}\nEspero que te sirva.'}}]}
+
+    client = feature.OpenAICompatibleSelectionClient(
+        post=lambda *args, **kwargs: Response(), api_key="secret", model="one",
+        sleep=lambda _: None,
+    )
+    assert client.select("{}") == {"selections": [{"cluster_id": 1, "reason": "ok"}]}
+
+
+def test_openai_compatible_client_malformed_response_logs_safe_preview(caplog):
+    class Response:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {"choices": [{"message": {"content": "no es json"}}]}
+
+    client = feature.OpenAICompatibleSelectionClient(
+        post=lambda *args, **kwargs: Response(), api_key="secret", model="one",
+        sleep=lambda _: None,
+    )
+    with caplog.at_level("WARNING", logger=feature.__name__):
+        with pytest.raises(feature.FeatureError):
+            client.select("{}")
+    assert "error_category=malformed_response http_status=200" in caplog.text
+    assert "no es json" in caplog.text
+    assert "secret" not in caplog.text
+
+
 def test_openai_compatible_client_fails_feature_error_on_non_2xx_without_fallback():
     calls = []
 

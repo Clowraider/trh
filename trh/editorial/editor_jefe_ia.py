@@ -12,6 +12,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+from trh.infrastructure.ai_response_parser import extract_json_object
 from trh.infrastructure.prompt_loader import load_prompt_text
 
 from pipeline.seleccionar_publicables import (
@@ -312,6 +313,7 @@ class OpenAICompatibleSelectionClient:
             "Accept": "application/json",
         }
         response = None
+        content = None
         try:
             response = self.post(
                 f"{self.url}/chat/completions", headers=headers,
@@ -323,7 +325,7 @@ class OpenAICompatibleSelectionClient:
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
-            return json.loads(content.strip())
+            return extract_json_object(content)
         except requests.RequestException as error:
             error_response = getattr(error, "response", None)
             status_source = response if response is not None else error_response
@@ -333,10 +335,11 @@ class OpenAICompatibleSelectionClient:
                 "error_category=http_error http_status=%s", self.model, http_status,
             )
         except ValueError:
+            preview = repr((content if isinstance(content, str) else "")[:240])
             logger.warning(
                 "editor_jefe.provider_attempt_failed model=%s "
-                "error_category=malformed_response http_status=%s",
-                self.model, getattr(response, "status_code", None),
+                "error_category=malformed_response http_status=%s response_preview=%s",
+                self.model, getattr(response, "status_code", None), preview,
             )
         except (IndexError, KeyError, TypeError):
             logger.warning(

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 from trh.publication import publicador
 
@@ -145,6 +146,23 @@ def _build_review_required_result(result, attempts, message, review=None):
     }
 
 
+def _format_review_note(attempts, reviews, error=None):
+    """Format editorial review metadata as a human-readable editor note."""
+    lines = [f"[{datetime.now().isoformat(timespec='minutes')}] Revisión editorial requerida"]
+    if error:
+        lines.append(f"Error: {error}")
+    for index, review in enumerate(reviews, start=1):
+        passed = review.get("passed")
+        issues = review.get("issues") or []
+        instructions = (review.get("correction_instructions") or "").strip()
+        lines.append(f"- Intento {index}: {'OK' if passed else 'NO PASÓ'}")
+        if issues:
+            lines.append(f"  Problemas: {', '.join(str(i) for i in issues)}")
+        if instructions:
+            lines.append(f"  Instrucciones: {instructions}")
+    return "\n".join(lines)
+
+
 def generate_article_with_editorial_control(
     cluster_id,
     nota_ia="",
@@ -163,7 +181,8 @@ def generate_article_with_editorial_control(
         first_review = review_article(first_result["contenido"])
     except Exception as exc:
         logger.warning("editorial_control.review_failed cluster_id=%s", cluster_id)
-        set_flag(cluster_id, True)
+        note = _format_review_note(1, [], error=str(exc))
+        set_flag(cluster_id, True, nota_editor=note)
         return _build_review_required_result(
             first_result,
             attempts=1,
@@ -196,7 +215,8 @@ def generate_article_with_editorial_control(
         second_review = review_article(second_result["contenido"])
     except Exception as exc:
         logger.warning("editorial_control.review_failed cluster_id=%s retry=1", cluster_id)
-        set_flag(cluster_id, True)
+        note = _format_review_note(2, [first_review], error=str(exc))
+        set_flag(cluster_id, True, nota_editor=note)
         return _build_review_required_result(
             second_result,
             attempts=2,
@@ -205,7 +225,11 @@ def generate_article_with_editorial_control(
         )
 
     review_required = not second_review["passed"]
-    set_flag(cluster_id, review_required)
+    if review_required:
+        note = _format_review_note(2, [first_review, second_review])
+        set_flag(cluster_id, True, nota_editor=note)
+    else:
+        set_flag(cluster_id, False)
     return {
         **second_result,
         "editorial_control": {
