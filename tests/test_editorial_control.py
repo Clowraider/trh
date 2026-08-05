@@ -53,7 +53,7 @@ def test_control_regenerates_once_with_correction_instructions_and_then_passes()
     review_results = [
         {
             "passed": False,
-            "issues": ["mentions_other_media"],
+            "issues": ["unnecessary_source_or_media_mentions"],
             "correction_instructions": "Reescribí sin nombrar otros medios y mantené un tono neutral.",
         },
         {
@@ -101,7 +101,7 @@ def test_control_marks_cluster_for_editorial_review_after_second_failure():
     def review(_contenido):
         return {
             "passed": False,
-            "issues": ["accusatory_tone"],
+            "issues": ["unsupported_accusations"],
             "correction_instructions": "Bajá el tono acusatorio y sostené solo hechos verificados.",
         }
 
@@ -125,7 +125,7 @@ def test_control_marks_cluster_for_editorial_review_after_second_failure():
     assert review_flags[0][1] is True
     assert review_flags[0][2] is not None
     assert "NO PASÓ" in review_flags[0][2]
-    assert "accusatory_tone" in review_flags[0][2]
+    assert "unsupported_accusations" in review_flags[0][2]
 
 
 def test_control_marks_review_required_when_first_review_errors_after_generation():
@@ -165,7 +165,7 @@ def test_control_marks_review_required_when_second_review_errors_after_regenerat
     review_results = [
         {
             "passed": False,
-            "issues": ["accusatory_tone"],
+            "issues": ["unsupported_accusations"],
             "correction_instructions": "Bajá el tono acusatorio.",
         },
         RuntimeError("control caído en retry"),
@@ -215,7 +215,7 @@ def test_control_marks_review_required_when_regeneration_fails_after_rejected_re
     def review(_contenido):
         return {
             "passed": False,
-            "issues": ["accusatory_tone"],
+            "issues": ["unsupported_accusations"],
             "correction_instructions": "Bajá el tono acusatorio.",
         }
 

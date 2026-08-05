@@ -5,14 +5,14 @@
   },
   {
     "code": "unsupported_accusations",
-    "instruction": "No afirmes culpabilidades, intenciones, responsabilidades, delitos o señalamientos acusatorios sin respaldo explícito en los hechos verificados o en las fuentes provistas."
+    "instruction": "No afirmes culpabilidades, intenciones, responsabilidades, delitos o señalamientos acusatorios sin que el propio texto del artículo explique explícitamente quién o qué los sostiene. No verifiques la verdad de las acusaciones contra fuentes externas."
   },
   {
     "code": "fabricated_or_exaggerated_claims",
-    "instruction": "No inventes hechos, citas, cifras, contexto o conclusiones, y no exageres ni presentes como seguro algo que las fuentes no sostienen con claridad."
+    "instruction": "No presentes como seguro algo que el propio texto del artículo no sostenga con claridad, y no inventes citas, cifras o conclusiones sin respaldo textual. No corrijas nombres, cargos, instituciones, fechas, hechos ni eventos basándote en conocimiento externo; eso lo hace el editor humano."
   },
   {
     "code": "militant_or_pamphleteering_framing",
-    "instruction": "Mantené un tono profesional, factual y no panfletario; evitá encuadres militantes, activistas o propagandísticos salvo que exista una guía editorial explícita y que el contenido siga respaldado por hechos verificables."
+    "instruction": "Mantené un tono profesional, factual y no panfletario; evitá encuadres militantes, activistas o propagandísticos salvo que exista una guía editorial explícita y que el contenido siga respaldado por el texto del artículo."
   }
 ]
