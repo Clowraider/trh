@@ -767,7 +767,7 @@ def test_single_cluster_generation_route_updates_note_and_reuses_generator(monke
         lambda cluster_id, nota_ia: updates.append((cluster_id, nota_ia)),
     )
     panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = (
-        lambda cluster_id, nota_ia="": generator_calls.append((cluster_id, nota_ia))
+        lambda cluster_id, nota_ia="", user_id=None: generator_calls.append((cluster_id, nota_ia, user_id))
         or {"ok": True}
     )
 
@@ -776,7 +776,7 @@ def test_single_cluster_generation_route_updates_note_and_reuses_generator(monke
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
     assert updates == [(7, "nueva nota")]
-    assert generator_calls == [(7, "nueva nota")]
+    assert generator_calls == [(7, "nueva nota", None)]
     assert pop_flashes(client) == [("success", "✅ Artículo generado correctamente")]
 
 
@@ -797,7 +797,7 @@ def test_single_cluster_generation_route_blocks_invalid_states_without_calling_g
         },
     )
     panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = (
-        lambda cluster_id, nota_ia="": generator_calls.append((cluster_id, nota_ia))
+        lambda cluster_id, nota_ia="", user_id=None: generator_calls.append((cluster_id, nota_ia, user_id))
         or {"ok": True}
     )
 
@@ -827,7 +827,7 @@ def test_single_cluster_generation_route_converts_generator_exception_into_flash
         },
     )
 
-    def explode(_cluster_id, nota_ia=""):
+    def explode(_cluster_id, nota_ia="", user_id=None):
         raise RuntimeError(f"boom: {nota_ia}")
 
     panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = explode
@@ -1355,8 +1355,8 @@ def test_bulk_generation_processes_saved_recommendations_sequentially_and_summar
     def load_saved(_factory):
         return list(saved)
 
-    def generate(cluster_id, nota_ia=""):
-        generator_calls.append((cluster_id, nota_ia))
+    def generate(cluster_id, nota_ia="", user_id=None):
+        generator_calls.append((cluster_id, nota_ia, user_id))
         if cluster_id == 4:
             return {"ok": False, "mensaje": "boom"}
         return {"ok": True}
@@ -1375,9 +1375,9 @@ def test_bulk_generation_processes_saved_recommendations_sequentially_and_summar
 
     assert response.status_code == 200
     assert generator_calls == [
-        (1, "persisted note"),
-        (4, ""),
-        (5, "special note"),
+        (1, "persisted note", None),
+        (4, "", None),
+        (5, "special note", None),
     ]
     assert b"2 generados" in response.data
     assert b"2 omitidos" in response.data
@@ -1722,7 +1722,10 @@ def test_split_cluster_blocks_generated_or_published_source_clusters(monkeypatch
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
-        ("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (7,)),
+        (
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
         ("close", None),
     ]
     assert pop_flashes(client) == [
@@ -1778,7 +1781,10 @@ def test_split_cluster_blocks_clusters_with_generation_in_flight(monkeypatch):
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
-        ("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (7,)),
+        (
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
         ("close", None),
     ]
     assert pop_flashes(client) == [
@@ -1834,7 +1840,10 @@ def test_split_cluster_blocks_published_source_clusters_without_revert_guidance(
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
-        ("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (7,)),
+        (
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
+            (7,),
+        ),
         ("close", None),
     ]
     assert pop_flashes(client) == [
@@ -1892,9 +1901,10 @@ def test_revertir_estado_resets_generated_content_media_and_publication_url(monk
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
         (
-            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
             (7,),
         ),
+        ("close", None),
         (
             "UPDATE clusters_editoriales SET estado_publicacion = 'pendiente', contenido_ia = NULL, foto_principal = NULL, fotos_secundarias = '[]'::jsonb, url_wp = NULL, requiere_revision_editorial = FALSE, actualizado_en = NOW() WHERE id = %s",
             (7,),
@@ -1948,7 +1958,7 @@ def test_revertir_estado_blocks_published_clusters(monkeypatch):
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
         (
-            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
             (7,),
         ),
         ("close", None),
@@ -2004,7 +2014,7 @@ def test_revertir_estado_blocks_clusters_with_generation_in_flight(monkeypatch):
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
         (
-            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
             (7,),
         ),
         ("close", None),
@@ -2060,9 +2070,10 @@ def test_revertir_estado_from_descartado_preserves_generated_assets(monkeypatch)
     assert response.headers["Location"].endswith("/cluster/7")
     assert executed == [
         (
-            "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
+            "SELECT id, titulo_representativo, contenido_ia, estado_publicacion, requiere_revision_editorial, foto_principal, fotos_secundarias, url_wp, nota_editor, nota_ia, ultima_publicacion, veces_publicado, cantidad_noticias, cantidad_fuentes, primera_noticia, ultima_noticia, score, estado, actualizado_en FROM clusters_editoriales WHERE id = %s",
             (7,),
         ),
+        ("close", None),
         (
             "UPDATE clusters_editoriales SET estado_publicacion = 'pendiente', actualizado_en = NOW() WHERE id = %s",
             (7,),
@@ -2153,7 +2164,7 @@ def test_aprobar_revision_editorial_clears_flag_and_redirects_to_cluster(monkeyp
     monkeypatch.setattr(
         panel.publicador,
         "set_requiere_revision_editorial",
-        lambda cluster_id, requires_review: updates.append((cluster_id, requires_review)),
+        lambda cluster_id, requires_review, nota_editor=None, user_id=None: updates.append((cluster_id, requires_review, user_id)),
     )
 
     client = panel.app.test_client()
@@ -2161,7 +2172,7 @@ def test_aprobar_revision_editorial_clears_flag_and_redirects_to_cluster(monkeyp
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
-    assert updates == [(7, False)]
+    assert updates == [(7, False, None)]
     assert pop_flashes(client) == [("success", "Revisión editorial aprobada. Ya podés publicar.")]
 
 
@@ -2179,7 +2190,7 @@ def test_publish_succeeds_after_editorial_review_approval(monkeypatch):
     monkeypatch.setattr(
         panel.publicador,
         "set_requiere_revision_editorial",
-        lambda cluster_id, requires_review: state.update(requiere_revision_editorial=requires_review),
+        lambda cluster_id, requires_review, nota_editor=None, user_id=None: state.update(requiere_revision_editorial=requires_review),
     )
     monkeypatch.setattr(
         panel.publicapress,
@@ -2286,3 +2297,135 @@ def test_post_zero_and_failures_show_no_partial_recommendation():
     )
     assert invalid.status_code == 200 and b"n\xc3\xbamero entero positivo" in invalid.data
     assert b"Recomendaci" not in invalid.data
+
+
+def _login_as_user_for_panel(client, monkeypatch, panel, user_id=5):
+    from datetime import timedelta
+    from trh.auth.time_utils import utc_now
+
+    monkeypatch.setitem(panel.app.config, "AUTH_REQUIRED", True)
+    monkeypatch.setattr(
+        "trh.auth.decorators.validate_session_token",
+        lambda _token: {
+            "session_token": "session-token",
+            "expires_at": utc_now() + timedelta(hours=1),
+            "csrf_token": "csrf-token",
+            "user_id": user_id,
+            "usuario": "jdoe",
+            "email": "jdoe@example.com",
+            "nombre": "John Doe",
+            "is_admin": False,
+        },
+    )
+    client.set_cookie("session_token", "session-token")
+
+
+def test_publicar_uses_per_user_state_when_authenticated(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+    _login_as_user_for_panel(client, monkeypatch, panel)
+
+    state_updates = []
+    monkeypatch.setattr(
+        panel,
+        "get_user_cluster_by_id",
+        lambda user_id, cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "generado",
+            "requiere_revision_editorial": False,
+            "contenido_ia": {"titulo": "T"},
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "update_user_cluster_state",
+        lambda user_id, cluster_id, **fields: state_updates.append((user_id, cluster_id, fields)),
+    )
+    monkeypatch.setattr(
+        panel.publicapress,
+        "publicar_cluster",
+        lambda cluster_id, user_id=None: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+    )
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda *_args: None,
+    )
+
+    response = client.post("/publicar/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert state_updates == []
+
+
+def test_descartar_uses_per_user_state_when_authenticated(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+    _login_as_user_for_panel(client, monkeypatch, panel)
+
+    state_updates = []
+    monkeypatch.setattr(
+        panel,
+        "get_user_cluster_by_id",
+        lambda user_id, cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "pendiente",
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "update_user_cluster_state",
+        lambda user_id, cluster_id, **fields: state_updates.append((user_id, cluster_id, fields)),
+    )
+    monkeypatch.setitem(
+        panel.app.config,
+        "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION",
+        lambda *_args: None,
+    )
+
+    response = client.post("/descartar/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/")
+    assert len(state_updates) == 1
+    assert state_updates[0][0] == 5
+    assert state_updates[0][1] == 7
+    assert state_updates[0][2]["estado_publicacion"] == "descartado"
+
+
+def test_revertir_uses_per_user_state_when_authenticated(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    client = panel.app.test_client()
+    _login_as_user_for_panel(client, monkeypatch, panel)
+
+    state_updates = []
+    monkeypatch.setattr(
+        panel,
+        "get_user_cluster_by_id",
+        lambda user_id, cluster_id: {
+            "id": cluster_id,
+            "estado_publicacion": "generado",
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "update_user_cluster_state",
+        lambda user_id, cluster_id, **fields: state_updates.append((user_id, cluster_id, fields)),
+    )
+
+    response = client.post("/revertir/7", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith("/cluster/7")
+    assert len(state_updates) == 1
+    assert state_updates[0][0] == 5
+    assert state_updates[0][1] == 7
+    assert state_updates[0][2]["estado_publicacion"] == "pendiente"
+    assert state_updates[0][2]["requiere_revision_editorial"] is False

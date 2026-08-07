@@ -26,6 +26,7 @@ from string import Template
 from datetime import datetime
 from psycopg2.extras import RealDictCursor
 
+from trh.clusters.repository import update_user_cluster_state
 from trh.infrastructure.ai_response_parser import extract_json_object
 from trh.infrastructure.env_loader import load_project_env
 from trh.infrastructure.prompt_loader import load_json_file, load_prompt_text
@@ -314,7 +315,7 @@ def llamar_ia(prompt):
     return parsed
 
 
-def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=None):
+def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=None, user_id=None):
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -335,6 +336,12 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=N
                 # Keep a generous but bounded size so the textarea remains usable.
                 if len(updated) > 4000:
                     updated = updated[-4000:]
+                if user_id is not None:
+                    update_user_cluster_state(
+                        user_id,
+                        cluster_id,
+                        requiere_revision_editorial=True,
+                    )
                 cur.execute(
                     """
                         UPDATE clusters_editoriales
@@ -346,6 +353,12 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=N
                     (True, updated, cluster_id),
                 )
             else:
+                if user_id is not None:
+                    update_user_cluster_state(
+                        user_id,
+                        cluster_id,
+                        requiere_revision_editorial=bool(requiere_revision),
+                    )
                 cur.execute(
                     """
                         UPDATE clusters_editoriales
@@ -364,27 +377,41 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=N
 # GUARDAR EL CONTENIDO GENERADO EN LA DB
 # =============================================================================
 
-def guardar_contenido_ia(cluster_id, contenido):
+def guardar_contenido_ia(cluster_id, contenido, user_id=None):
     """
     Guarda el contenido generado por la IA en el cluster correspondiente.
 
     Campos actualizados en clusters_editoriales:
     - contenido_ia: JSON con {titulo, resumen, articulo, categoria}
-    - estado_publicacion: 'generado'
-    - actualizado_en: ahora
+
+    El estado de publicación se escribe en user_cluster_states cuando se provee
+    ``user_id``; de lo contrario se mantiene en clusters_editoriales para
+    compatibilidad con consumidores sin contexto de usuario.
 
     Args:
         cluster_id: ID del cluster en la DB
         contenido: dict con {titulo, resumen, articulo, categoria}
+        user_id: ID del usuario que genera el artículo (opcional)
     """
     conn = get_connection()
     try:
         with conn.cursor() as cur:
+            if user_id is not None:
+                update_user_cluster_state(
+                    user_id,
+                    cluster_id,
+                    estado_publicacion='generado',
+                )
+            else:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET estado_publicacion = 'generado'
+                    WHERE id = %s
+                """, (cluster_id,))
             cur.execute("""
                 UPDATE clusters_editoriales
                 SET
                     contenido_ia = %s,
-                    estado_publicacion = 'generado',
                     actualizado_en = NOW()
                 WHERE id = %s
             """, (json.dumps(contenido, ensure_ascii=False), cluster_id))
@@ -456,7 +483,7 @@ def obtener_cluster_con_detalles(cluster_id):
 # FUNCIÓN PRINCIPAL: GENERAR Y GUARDAR
 # =============================================================================
 
-def generar_articulo_para_cluster(cluster_id, nota_ia=''):
+def generar_articulo_para_cluster(cluster_id, nota_ia='', user_id=None):
     """
     Función principal que orquesta todo el proceso de generación.
 
@@ -472,6 +499,9 @@ def generar_articulo_para_cluster(cluster_id, nota_ia=''):
 
     Args:
         cluster_id: ID del cluster a procesar
+        nota_ia: nota editorial opcional para guiar a la IA
+        user_id: ID del usuario que genera; si se provee, el estado de
+            publicación se escribe en user_cluster_states.
 
     Returns:
         dict con {ok: bool, contenido: dict, mensaje: str}
@@ -480,36 +510,63 @@ def generar_articulo_para_cluster(cluster_id, nota_ia=''):
     logger.info("🆕 GENERANDO ARTÍCULO PARA CLUSTER ID: %s", cluster_id)
     logger.info("%s", "=" * 80)
 
+    def _set_estado_generando():
+        if user_id is not None:
+            update_user_cluster_state(
+                user_id,
+                cluster_id,
+                estado_publicacion='generando',
+            )
+        else:
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE clusters_editoriales
+                        SET estado_publicacion = 'generando'
+                        WHERE id = %s
+                    """, (cluster_id,))
+                conn.commit()
+            finally:
+                conn.close()
+
+    def _restore_estado_pendiente(nota_editor=None):
+        if user_id is not None:
+            update_user_cluster_state(
+                user_id,
+                cluster_id,
+                estado_publicacion='pendiente',
+            )
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                if nota_editor is not None:
+                    cur.execute("""
+                        UPDATE clusters_editoriales
+                        SET nota_editor = %s,
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """, (nota_editor, cluster_id))
+                elif user_id is None:
+                    cur.execute("""
+                        UPDATE clusters_editoriales
+                        SET estado_publicacion = 'pendiente',
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """, (cluster_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
     # Marcar como "generando" para que el panel no muestre inconsistencias
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET estado_publicacion = 'generando'
-                WHERE id = %s
-            """, (cluster_id,))
-        conn.commit()
-    finally:
-        conn.close()
+    _set_estado_generando()
 
     # 1. Obtener noticias
     noticias = obtener_noticias_cluster(cluster_id)
     logger.info("📰 Noticias encontradas: %s", len(noticias))
 
     if not noticias:
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET estado_publicacion = 'pendiente'
-                    WHERE id = %s
-                """, (cluster_id,))
-            conn.commit()
-        finally:
-            conn.close()
-
+        _restore_estado_pendiente()
         return {
             "ok": False,
             "mensaje": "El cluster no tiene noticias asociadas."
@@ -524,25 +581,12 @@ def generar_articulo_para_cluster(cluster_id, nota_ia=''):
         resultado = llamar_ia(prompt)
     except Exception as e:
         # Si falla la IA, marcar como pendiente de nuevo
-        conn = get_connection()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET estado_publicacion = 'pendiente',
-                        nota_editor = %s,
-                        actualizado_en = NOW()
-                    WHERE id = %s
-                """, (f"Error IA: {str(e)[:400]}", cluster_id))
-            conn.commit()
-        finally:
-            conn.close()
-
+        _restore_estado_pendiente(nota_editor=f"Error IA: {str(e)[:400]}")
         logger.error("❌ Error llamando a la IA: %s", e)
         return {"ok": False, "mensaje": f"Error de IA: {e}"}
 
     # 4. Guardar en la DB
-    guardar_contenido_ia(cluster_id, resultado)
+    guardar_contenido_ia(cluster_id, resultado, user_id=user_id)
 
     # 5. Mostrar en consola
     logger.info("✅ Artículo generado | Título: %s | Categoría: %s", resultado.get('titulo', 'N/A'), resultado.get('categoria', 'N/A'))

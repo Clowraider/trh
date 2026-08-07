@@ -25,9 +25,14 @@ import requests
 import json
 import psycopg2
 from urllib.parse import urlparse
+from datetime import datetime
 from psycopg2.extras import RealDictCursor
 from PIL import Image, ImageDraw, ImageFont
 
+from trh.clusters.repository import (
+    get_or_create_user_cluster_state,
+    update_user_cluster_state,
+)
 from trh.infrastructure.env_loader import load_project_env
 from trh.wordpress.auth import build_wp_auth_headers
 from trh.wordpress.repository import get_wordpress_config_by_user
@@ -682,7 +687,13 @@ def publicar_cluster(cluster_id, user_id=None):
                 "mensaje": "El cluster no tiene contenido generado por IA. Generalo primero."
             }
 
-        if cluster.get('estado_publicacion') == 'publicado':
+        if user_id is not None:
+            user_state = get_or_create_user_cluster_state(user_id, cluster_id)
+            estado_publicacion = user_state.get('estado_publicacion') or 'pendiente'
+        else:
+            estado_publicacion = cluster.get('estado_publicacion') or 'pendiente'
+
+        if estado_publicacion == 'publicado':
             return {
                 "ok": False,
                 "mensaje": "Este cluster ya fue publicado."
@@ -756,17 +767,29 @@ def publicar_cluster(cluster_id, user_id=None):
             }
 
         # 3. Actualizar la DB con la URL de WP y marcar como publicado
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET
-                    url_wp = %s,
-                    estado_publicacion = 'publicado',
-                    ultima_publicacion = NOW(),
-                    veces_publicado = veces_publicado + 1,
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (url_wp, cluster_id))
+        if user_id is not None:
+            user_state = get_or_create_user_cluster_state(user_id, cluster_id)
+            veces_publicado = int(user_state.get('veces_publicado') or 0) + 1
+            update_user_cluster_state(
+                user_id,
+                cluster_id,
+                estado_publicacion='publicado',
+                url_wp=url_wp,
+                veces_publicado=veces_publicado,
+                ultima_publicacion=datetime.now(),
+            )
+        else:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET
+                        url_wp = %s,
+                        estado_publicacion = 'publicado',
+                        ultima_publicacion = NOW(),
+                        veces_publicado = veces_publicado + 1,
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (url_wp, cluster_id))
         conn.commit()
 
         _limpiar_fotos_temporales_cluster(cluster_id)

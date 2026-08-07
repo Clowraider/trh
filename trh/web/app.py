@@ -72,7 +72,12 @@ from trh.web.admin_routes import bp as admin_bp
 from trh.web.config_routes import bp as config_bp
 from trh.auth.decorators import require_auth
 from trh.sources.repository import sync_news_sources
-from trh.clusters.repository import list_clusters_for_user
+from trh.clusters.repository import (
+    get_or_create_user_cluster_state,
+    get_user_cluster_by_id,
+    list_clusters_for_user,
+    update_user_cluster_state,
+)
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
@@ -150,8 +155,8 @@ def _update_cluster_nota_ia(cluster_id, nota_ia):
         conn.close()
 
 
-def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_states=None, generator=None):
-    cluster = cluster or obtener_cluster_db(cluster_id)
+def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_states=None, generator=None, user_id=None):
+    cluster = cluster or _obtener_cluster_para_usuario(cluster_id, user_id)
     if not cluster:
         return {"status": "missing"}
 
@@ -170,7 +175,7 @@ def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_st
         "EDITOR_JEFE_ARTICLE_GENERATOR", publicador.generar_articulo_para_cluster
     )
     try:
-        resultado = generator(cluster_id, nota_ia=effective_nota_ia)
+        resultado = generator(cluster_id, nota_ia=effective_nota_ia, user_id=user_id)
     except Exception as exc:
         return {"status": "failed", "message": str(exc)}
 
@@ -264,13 +269,13 @@ def _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_secundarias):
         conn.close()
 
 
-def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations):
+def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations, user_id=None):
     enriched = []
     for item in saved_recommendations:
         enriched_item = dict(item)
         cluster = None
         try:
-            cluster = obtener_cluster_db(enriched_item['cluster_id'])
+            cluster = _obtener_cluster_para_usuario(enriched_item['cluster_id'], user_id)
             if cluster:
                 for field in (
                     'estado_publicacion',
@@ -339,6 +344,11 @@ def _enriquecer_items_con_keywords_panel(
 # HELPERS DE BASE DE DATOS
 # =============================================================================
 
+def _current_user_id():
+    user = g.get("current_user")
+    return user.get("user_id") if user else None
+
+
 def _normalizar_fotos_secundarias(raw):
     if not raw:
         return []
@@ -393,6 +403,13 @@ def obtener_cluster_db(cluster_id):
             return row
     finally:
         conn.close()
+
+
+def _obtener_cluster_para_usuario(cluster_id, user_id=None):
+    """Return cluster data, using per-user state when a user is logged in."""
+    if user_id is None:
+        return obtener_cluster_db(cluster_id)
+    return get_user_cluster_by_id(user_id, cluster_id)
 
 
 def obtener_noticias_cluster(cluster_id):
@@ -1031,7 +1048,7 @@ def editor_jefe_ia():
     )
 
     saved_recommendations = _enriquecer_recomendaciones_guardadas_para_publicacion(
-        saved_recommendations
+        saved_recommendations, user_id=_current_user_id()
     )
 
     saved_keywords_por_cluster = {}
@@ -1376,7 +1393,7 @@ def cluster_detalle(cluster_id):
     - Artículo generado (si ya se generó)
     - Botón "Publicar en WordPress" (si está generado)
     """
-    cluster = obtener_cluster_db(cluster_id)
+    cluster = _obtener_cluster_para_usuario(cluster_id, _current_user_id())
 
     if not cluster:
         flash(f"Cluster {cluster_id} no encontrado", "danger")
@@ -1412,6 +1429,7 @@ def generar_articulo(cluster_id):
     outcome = _generate_cluster_article(
         cluster_id,
         nota_ia=request.form.get('nota_ia', ''),
+        user_id=_current_user_id(),
     )
 
     if outcome["status"] == "missing":
@@ -1469,9 +1487,10 @@ def generar_articulos_guardados_editor_jefe_ia():
         cluster_id = item["cluster_id"]
         outcome = _generate_cluster_article(
             cluster_id,
-            cluster=obtener_cluster_db(cluster_id),
+            cluster=_obtener_cluster_para_usuario(cluster_id, _current_user_id()),
             allowed_states=('pendiente',),
             generator=bulk_generator,
+            user_id=_current_user_id(),
         )
         if outcome["status"] == "generated":
             generated += 1
@@ -1501,7 +1520,7 @@ def preview_articulo(cluster_id):
     - Guardar cambios
     - Publicar en WordPress
     """
-    cluster = obtener_cluster_db(cluster_id)
+    cluster = _obtener_cluster_para_usuario(cluster_id, _current_user_id())
     if not cluster:
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
@@ -1572,7 +1591,8 @@ def publicar_cluster(cluster_id):
 
     Recibe POST del botón "Publicar en WordPress" en el preview.
     """
-    cluster = obtener_cluster_db(cluster_id)
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
     if not cluster:
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
@@ -1602,7 +1622,6 @@ def publicar_cluster(cluster_id):
             flash(f"❌ Error guardando fotos: {e}", "danger")
             return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    user_id = g.get("current_user", {}).get("user_id")
     try:
         resultado = publicapress.publicar_cluster(cluster_id, user_id)
     except RuntimeError as exc:
@@ -1634,7 +1653,8 @@ def publicar_cluster(cluster_id):
 @app.route("/aprobar-revision-editorial/<int:cluster_id>", methods=["POST"])
 @require_auth
 def aprobar_revision_editorial(cluster_id):
-    cluster = obtener_cluster_db(cluster_id)
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
     if not cluster:
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
@@ -1646,7 +1666,7 @@ def aprobar_revision_editorial(cluster_id):
     set_review_required = app.config.get(
         "EDITORIAL_REVIEW_FLAG_SETTER", publicador.set_requiere_revision_editorial
     )
-    set_review_required(cluster_id, False)
+    set_review_required(cluster_id, False, user_id=user_id)
     flash("Revisión editorial aprobada. Ya podés publicar.", "success")
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
@@ -1655,7 +1675,7 @@ def aprobar_revision_editorial(cluster_id):
 @require_auth
 def upload_fotos(cluster_id):
     """Sube fotos manuales temporales para un cluster."""
-    cluster = obtener_cluster_db(cluster_id)
+    cluster = _obtener_cluster_para_usuario(cluster_id, _current_user_id())
     if not cluster:
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
@@ -1725,32 +1745,34 @@ def split_cluster(cluster_id):
         flash("Seleccioná al menos una noticia para crear el nuevo cluster.", "warning")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
+    if not cluster:
+        flash("Cluster origen no encontrado.", "danger")
+        return redirect(url_for('index'))
+
+    estado_publicacion = cluster.get('estado_publicacion') or 'pendiente'
+    if _split_requires_pending_publication_state(estado_publicacion):
+        if _published_cluster_blocks_transition(estado_publicacion):
+            flash(
+                "No se puede partir un cluster publicado porque ya tiene una nota activa en WordPress.",
+                "warning",
+            )
+        elif _generation_in_flight_blocks_revert(estado_publicacion):
+            flash(
+                "No se puede partir un cluster mientras se está generando el artículo. Esperá a que termine el proceso.",
+                "warning",
+            )
+        else:
+            flash(
+                "No se puede partir un cluster generado. Revertí primero a pendiente si necesitás dividirlo.",
+                "warning",
+            )
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s", (cluster_id,))
-            origen = cur.fetchone()
-            if not origen:
-                flash("Cluster origen no encontrado.", "danger")
-                return redirect(url_for('index'))
-
-            if _split_requires_pending_publication_state(origen.get('estado_publicacion')):
-                if _published_cluster_blocks_transition(origen.get('estado_publicacion')):
-                    flash(
-                        "No se puede partir un cluster publicado porque ya tiene una nota activa en WordPress.",
-                        "warning",
-                    )
-                elif _generation_in_flight_blocks_revert(origen.get('estado_publicacion')):
-                    flash(
-                        "No se puede partir un cluster mientras se está generando el artículo. Esperá a que termine el proceso.",
-                        "warning",
-                    )
-                else:
-                    flash(
-                        "No se puede partir un cluster generado. Revertí primero a pendiente si necesitás dividirlo.",
-                        "warning",
-                    )
-                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
             cur.execute("SELECT COUNT(*) AS total FROM noticias_historico WHERE cluster_id = %s", (cluster_id,))
             total_origen = int((cur.fetchone() or {}).get('total') or 0)
@@ -1825,37 +1847,41 @@ def descartar_cluster(cluster_id):
         else url_for("index")
     )
 
-    conn = get_connection()
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
+    if not cluster:
+        flash("Cluster no encontrado", "warning")
+        return redirect(redirect_target)
+
+    estado_actual = cluster.get('estado_publicacion') or 'pendiente'
+    if estado_actual == 'descartado':
+        flash("El cluster ya estaba descartado", "info")
+        return redirect(redirect_target)
+
+    if user_id is not None:
+        update_user_cluster_state(
+            user_id,
+            cluster_id,
+            estado_publicacion='descartado',
+            descartado_en=datetime.now(),
+        )
+    else:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE clusters_editoriales
+                    SET estado_publicacion = 'descartado',
+                        actualizado_en = NOW()
+                    WHERE id = %s
+                """, (cluster_id,))
+            conn.commit()
+        finally:
+            conn.close()
+
     delete_saved = app.config.get(
         "EDITOR_JEFE_DELETE_SAVED_RECOMMENDATION", delete_saved_recommendation
     )
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, estado_publicacion FROM clusters_editoriales WHERE id = %s",
-                (cluster_id,)
-            )
-            cluster = cur.fetchone()
-
-            if not cluster:
-                flash("Cluster no encontrado", "warning")
-                return redirect(redirect_target)
-
-            estado_actual = cluster.get('estado_publicacion') or 'pendiente'
-            if estado_actual == 'descartado':
-                flash("El cluster ya estaba descartado", "info")
-                return redirect(redirect_target)
-
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET estado_publicacion = 'descartado',
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (cluster_id,))
-        conn.commit()
-    finally:
-        conn.close()
-
     try:
         delete_saved(get_connection, cluster_id)
     except Exception:
@@ -1873,56 +1899,63 @@ def revertir_estado(cluster_id):
     """
     Revierte un cluster a 'pendiente' para poder regenerar el artículo.
     """
-    conn = get_connection()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, estado_publicacion, requiere_revision_editorial FROM clusters_editoriales WHERE id = %s",
-                (cluster_id,),
-            )
-            cluster = cur.fetchone()
-            if not cluster:
-                flash("Cluster no encontrado", "warning")
-                return redirect(url_for('index'))
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
+    if not cluster:
+        flash("Cluster no encontrado", "warning")
+        return redirect(url_for('index'))
 
-            if _generation_in_flight_blocks_revert(cluster.get('estado_publicacion')):
-                flash(
-                    "No se puede revertir un cluster mientras la generación sigue en curso.",
-                    "warning",
-                )
-                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+    estado_publicacion = cluster.get('estado_publicacion') or 'pendiente'
+    if _generation_in_flight_blocks_revert(estado_publicacion):
+        flash(
+            "No se puede revertir un cluster mientras la generación sigue en curso.",
+            "warning",
+        )
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-            if _published_cluster_blocks_transition(cluster.get('estado_publicacion')):
-                flash(
-                    "No se puede revertir un cluster publicado porque la nota sigue activa en WordPress.",
-                    "warning",
-                )
-                return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
+    if _published_cluster_blocks_transition(estado_publicacion):
+        flash(
+            "No se puede revertir un cluster publicado porque la nota sigue activa en WordPress.",
+            "warning",
+        )
+        return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-            if _revert_requires_generated_asset_reset(cluster.get('estado_publicacion')):
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET estado_publicacion = 'pendiente',
-                        contenido_ia = NULL,
-                        foto_principal = NULL,
-                        fotos_secundarias = '[]'::jsonb,
-                        url_wp = NULL,
-                        requiere_revision_editorial = FALSE,
-                        actualizado_en = NOW()
-                    WHERE id = %s
-                """, (cluster_id,))
-            else:
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET estado_publicacion = 'pendiente',
-                        actualizado_en = NOW()
-                    WHERE id = %s
-                """, (cluster_id,))
-        conn.commit()
-        flash("Revertido a pendiente", "info")
-    finally:
-        conn.close()
+    if user_id is not None:
+        update_user_cluster_state(
+            user_id,
+            cluster_id,
+            estado_publicacion='pendiente',
+            requiere_revision_editorial=False,
+            url_wp=None,
+        )
+    else:
+        conn = get_connection()
+        try:
+            with conn.cursor() as cur:
+                if _revert_requires_generated_asset_reset(estado_publicacion):
+                    cur.execute("""
+                        UPDATE clusters_editoriales
+                        SET estado_publicacion = 'pendiente',
+                            contenido_ia = NULL,
+                            foto_principal = NULL,
+                            fotos_secundarias = '[]'::jsonb,
+                            url_wp = NULL,
+                            requiere_revision_editorial = FALSE,
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """, (cluster_id,))
+                else:
+                    cur.execute("""
+                        UPDATE clusters_editoriales
+                        SET estado_publicacion = 'pendiente',
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """, (cluster_id,))
+            conn.commit()
+        finally:
+            conn.close()
 
+    flash("Revertido a pendiente", "info")
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
 
