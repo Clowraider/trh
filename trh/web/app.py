@@ -68,6 +68,7 @@ app.config["AUTH_REQUIRED"] = os.getenv("AUTH_REQUIRED", "True").lower() in ("tr
 
 from trh.web.auth_routes import bp as auth_bp
 from trh.web.admin_routes import bp as admin_bp
+from trh.auth.decorators import require_auth
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
@@ -82,7 +83,25 @@ def _csrf_check():
         return None
     if request.endpoint == "static":
         return None
+
     from trh.auth.csrf import validate_csrf_request
+    from trh.auth.sessions import validate_session_token
+
+    # The login endpoint uses a CSRF token stored in the signed Flask session
+    # because there is no server-side session yet.
+    if request.endpoint == "auth.login":
+        result = validate_csrf_request()
+        if result is not None:
+            message, status = result
+            return jsonify({"error": message}), status
+        return None
+
+    # For all other state-changing routes, skip CSRF validation when the user
+    # is not authenticated so @require_auth can redirect to the login page.
+    session_token = request.cookies.get("session_token")
+    if validate_session_token(session_token) is None:
+        return None
+
     result = validate_csrf_request()
     if result is not None:
         message, status = result
@@ -850,6 +869,7 @@ def build_cluster_keywords_for_panel(keywords_por_cluster, priority_keywords_row
 # =============================================================================
 
 @app.route("/")
+@require_auth
 def index():
     """
     Página principal: lista de candidatos a publicación.
@@ -910,6 +930,7 @@ def index():
 
 
 @app.route("/editor-jefe-ia", methods=["GET", "POST"])
+@require_auth
 def editor_jefe_ia():
     state, selections, maximum, minimum_editorial_score = "idle", [], "", "50"
     saved_recommendations = []
@@ -1029,6 +1050,7 @@ def editor_jefe_ia():
 
 
 @app.route("/reportes/calidad")
+@require_auth
 def reporte_calidad():
     fuente = (request.args.get('fuente') or '').strip() or None
     desde = (request.args.get('desde') or '').strip() or None
@@ -1053,6 +1075,7 @@ def reporte_calidad():
 
 
 @app.route("/keywords-prioridad")
+@require_auth
 def panel_keywords_prioridad():
     q = (request.args.get('q') or '').strip()
     rows = listar_keywords_prioridad(q=q or None)
@@ -1073,6 +1096,7 @@ def _redirect_keyword_priority_return_target():
 
 
 @app.route("/keywords-prioridad/crear", methods=["POST"])
+@require_auth
 def crear_keyword_prioridad():
     keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
     tipo = normalizar_tipo_keyword(request.form.get('tipo'))
@@ -1126,6 +1150,7 @@ def crear_keyword_prioridad():
 
 
 @app.route("/keywords-prioridad/<int:keyword_id>/editar", methods=["POST"])
+@require_auth
 def editar_keyword_prioridad(keyword_id):
     keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
     tipo = normalizar_tipo_keyword(request.form.get('tipo'))
@@ -1188,6 +1213,7 @@ def editar_keyword_prioridad(keyword_id):
 
 
 @app.route("/keywords-prioridad/<int:keyword_id>/borrar", methods=["POST"])
+@require_auth
 def borrar_keyword_prioridad(keyword_id):
     conn = get_connection()
     try:
@@ -1208,6 +1234,7 @@ def borrar_keyword_prioridad(keyword_id):
 
 
 @app.route("/keywords-prioridad/buscar")
+@require_auth
 def buscar_keyword_prioridad():
     keyword = normalizar_keyword_minima(request.args.get('keyword', ''))
     if not keyword:
@@ -1252,6 +1279,7 @@ def buscar_keyword_prioridad():
 
 
 @app.route("/keywords-prioridad/upsert", methods=["POST"])
+@require_auth
 def upsert_keyword_prioridad():
     keyword = normalizar_keyword_minima(request.form.get('keyword', ''))
     tipo = normalizar_tipo_keyword(request.form.get('tipo'))
@@ -1318,6 +1346,7 @@ def upsert_keyword_prioridad():
 
 
 @app.route("/cluster/<int:cluster_id>")
+@require_auth
 def cluster_detalle(cluster_id):
     """
     Detalle de un cluster específico.
@@ -1355,6 +1384,7 @@ def cluster_detalle(cluster_id):
 
 
 @app.route("/generar/<int:cluster_id>", methods=["POST"])
+@require_auth
 def generar_articulo(cluster_id):
     """
     Genera el artículo con IA para el cluster indicado.
@@ -1390,6 +1420,7 @@ def generar_articulo(cluster_id):
 
 
 @app.route("/editor-jefe-ia/generar-guardadas", methods=["POST"])
+@require_auth
 def generar_articulos_guardados_editor_jefe_ia():
     connection_factory = app.config.get(
         "EDITOR_JEFE_CONNECTION_FACTORY", get_connection
@@ -1442,6 +1473,7 @@ def generar_articulos_guardados_editor_jefe_ia():
 
 
 @app.route("/preview/<int:cluster_id>")
+@require_auth
 def preview_articulo(cluster_id):
     """
     Muestra el artículo generado para revisión y edición.
@@ -1476,6 +1508,7 @@ def preview_articulo(cluster_id):
 
 
 @app.route("/guardar-edicion/<int:cluster_id>", methods=["POST"])
+@require_auth
 def guardar_edicion(cluster_id):
     """
     Guarda los cambios del editor (título, resumen, artículo, categoría, notas).
@@ -1515,6 +1548,7 @@ def guardar_edicion(cluster_id):
 
 
 @app.route("/publicar/<int:cluster_id>", methods=["POST"])
+@require_auth
 def publicar_cluster(cluster_id):
     """
     Publica el cluster en WordPress.
@@ -1575,6 +1609,7 @@ def publicar_cluster(cluster_id):
 
 
 @app.route("/aprobar-revision-editorial/<int:cluster_id>", methods=["POST"])
+@require_auth
 def aprobar_revision_editorial(cluster_id):
     cluster = obtener_cluster_db(cluster_id)
     if not cluster:
@@ -1594,6 +1629,7 @@ def aprobar_revision_editorial(cluster_id):
 
 
 @app.route("/upload-fotos/<int:cluster_id>", methods=["POST"])
+@require_auth
 def upload_fotos(cluster_id):
     """Sube fotos manuales temporales para un cluster."""
     cluster = obtener_cluster_db(cluster_id)
@@ -1635,6 +1671,7 @@ def upload_fotos(cluster_id):
 
 
 @app.route("/set-foto/<int:cluster_id>", methods=["POST"])
+@require_auth
 def set_foto_principal(cluster_id):
     """
     Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
@@ -1647,6 +1684,7 @@ def set_foto_principal(cluster_id):
 
 
 @app.route("/split-cluster/<int:cluster_id>", methods=["POST"])
+@require_auth
 def split_cluster(cluster_id):
     """
     Crea un nuevo cluster moviendo noticias seleccionadas desde cluster_id.
@@ -1752,6 +1790,7 @@ def split_cluster(cluster_id):
 
 
 @app.route("/descartar/<int:cluster_id>", methods=["POST"])
+@require_auth
 def descartar_cluster(cluster_id):
     """
     Descarta un cluster para que no aparezca en la lista de candidatos.
@@ -1806,6 +1845,7 @@ def descartar_cluster(cluster_id):
 
 
 @app.route("/revertir/<int:cluster_id>", methods=["POST"])
+@require_auth
 def revertir_estado(cluster_id):
     """
     Revierte un cluster a 'pendiente' para poder regenerar el artículo.
@@ -1868,6 +1908,7 @@ def revertir_estado(cluster_id):
 # =============================================================================
 
 @app.route("/noticia/<int:noticia_id>")
+@require_auth
 def redirigir_noticia(noticia_id):
     """
     Redirige a la URL original de la noticia en el medio.
