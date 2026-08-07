@@ -71,10 +71,20 @@ from trh.web.auth_routes import bp as auth_bp
 from trh.web.admin_routes import bp as admin_bp
 from trh.web.config_routes import bp as config_bp
 from trh.auth.decorators import require_auth
+from trh.sources.repository import sync_news_sources
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(config_bp)
+
+
+try:
+    sync_news_sources()
+except Exception:
+    logger.exception(
+        "No se pudieron sincronizar las fuentes de noticias al iniciar la aplicación. "
+        "Se reintentará automáticamente en próximas operaciones que usen la tabla."
+    )
 
 
 @app.before_request
