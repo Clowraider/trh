@@ -72,6 +72,7 @@ from trh.web.admin_routes import bp as admin_bp
 from trh.web.config_routes import bp as config_bp
 from trh.auth.decorators import require_auth
 from trh.sources.repository import sync_news_sources
+from trh.clusters.repository import list_clusters_for_user
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
@@ -894,7 +895,10 @@ def index():
     if orden_actual not in ('score', 'editorial'):
         orden_actual = 'editorial'
 
-    clusters = listar_todos_los_clusters()
+    if g.get("current_user"):
+        clusters = list_clusters_for_user(g.current_user["user_id"])
+    else:
+        clusters = listar_todos_los_clusters()
 
     # Traer score editorial recalculado + keywords por cluster
     conn = get_connection()

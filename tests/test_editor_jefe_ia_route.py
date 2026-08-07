@@ -1478,6 +1478,44 @@ def test_index_highlights_existing_priority_keywords_in_cluster_list(monkeypatch
     assert re.search(r'data-priority-keyword="false"[\s\S]*?>\s*economía\s*<', html)
 
 
+def test_index_uses_per_user_cluster_list_when_authenticated(monkeypatch):
+    import app as panel
+    from datetime import timedelta
+
+    from trh.auth.time_utils import utc_now
+
+    configure_panel(panel)
+    monkeypatch.setitem(panel.app.config, "AUTH_REQUIRED", True)
+    monkeypatch.setattr(
+        "trh.auth.decorators.validate_session_token",
+        lambda _token: {
+            "session_token": "session-token",
+            "expires_at": utc_now() + timedelta(hours=1),
+            "csrf_token": "csrf-token",
+            "user_id": 5,
+            "usuario": "jdoe",
+            "email": "jdoe@example.com",
+            "nombre": "John Doe",
+            "is_admin": False,
+        },
+    )
+
+    seen = []
+    monkeypatch.setattr(
+        panel,
+        "list_clusters_for_user",
+        lambda user_id: seen.append(user_id) or [],
+    )
+    monkeypatch.setattr(panel, "generar_candidatos", lambda _conn: [])
+
+    client = panel.app.test_client()
+    client.set_cookie("session_token", "session-token")
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert seen == [5]
+
+
 def test_editor_jefe_ia_keywords_use_shared_keyword_modal_flow(monkeypatch):
     import app as panel
 
