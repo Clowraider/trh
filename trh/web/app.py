@@ -25,7 +25,8 @@ from flask import (
     url_for,
     flash,
     jsonify,
-    make_response
+    make_response,
+    g,
 )
 from PIL import Image
 from pipeline.seleccionar_publicables import get_connection, generar_candidatos
@@ -68,10 +69,12 @@ app.config["AUTH_REQUIRED"] = os.getenv("AUTH_REQUIRED", "True").lower() in ("tr
 
 from trh.web.auth_routes import bp as auth_bp
 from trh.web.admin_routes import bp as admin_bp
+from trh.web.config_routes import bp as config_bp
 from trh.auth.decorators import require_auth
 
 app.register_blueprint(auth_bp)
 app.register_blueprint(admin_bp)
+app.register_blueprint(config_bp)
 
 
 @app.before_request
@@ -1585,7 +1588,13 @@ def publicar_cluster(cluster_id):
             flash(f"❌ Error guardando fotos: {e}", "danger")
             return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    resultado = publicapress.publicar_cluster(cluster_id)
+    user_id = g.get("current_user", {}).get("user_id")
+    try:
+        resultado = publicapress.publicar_cluster(cluster_id, user_id)
+    except RuntimeError as exc:
+        flash(f"❌ Error: {exc}", "danger")
+        endpoint = 'cluster_detalle' if redirect_to_cluster else 'preview_articulo'
+        return redirect(url_for(endpoint, cluster_id=cluster_id))
 
     if resultado["ok"]:
         delete_saved = app.config.get(

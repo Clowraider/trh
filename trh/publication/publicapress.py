@@ -22,7 +22,6 @@ import logging
 import time
 import shutil
 import requests
-import base64
 import json
 import psycopg2
 from urllib.parse import urlparse
@@ -30,6 +29,8 @@ from psycopg2.extras import RealDictCursor
 from PIL import Image, ImageDraw, ImageFont
 
 from trh.infrastructure.env_loader import load_project_env
+from trh.wordpress.auth import build_wp_auth_headers
+from trh.wordpress.repository import get_wordpress_config_by_user
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -44,10 +45,6 @@ DB_CONFIG = {
     "user": os.getenv("DB_USER", "postgres"),
     "password": os.getenv("DB_PASSWORD")
 }
-
-WP_URL = os.getenv("WP_URL", "https://trh.com.ar").rstrip('/')
-WP_USERNAME = os.getenv("WP_USERNAME")
-WP_APP_PASSWORD = os.getenv("WP_APP_PASSWORD")
 
 def _env_float(name, default):
     try:
@@ -84,41 +81,33 @@ TEMP_UPLOAD_BASE_DIR = os.path.join(PROJECT_ROOT, 'static', 'uploads', 'tmp')
 # AUTENTICACIÓN WORDPRESS (Basic Auth con Application Password)
 # =============================================================================
 
-def _get_wp_headers():
-    """
-    Construye los headers de autenticación para la REST API de WordPress.
-
-    WordPress usa autenticación Basic Auth:
-      - Se combina username:app_password
-      - Se encodea en Base64
-      - Se manda como header: Authorization: Basic <base64>
-
-    No es la forma más segura del mundo (no usa OAuth2),
-    pero es estándar para scripts/MVP con Application Passwords.
-    """
-    if not WP_USERNAME or not WP_APP_PASSWORD:
-        raise RuntimeError('Falta WP_USERNAME o WP_APP_PASSWORD en entorno (.env)')
-    credentials = f"{WP_USERNAME}:{WP_APP_PASSWORD}"
-    token = base64.b64encode(credentials.encode()).decode('utf-8')
-    return {
-        'Authorization': f'Basic {token}',
-        'Content-Type': 'application/json'
-    }
+def _config_or_raise(user_id):
+    """Return the WordPress config for a user or raise a clear error."""
+    if user_id is None:
+        raise RuntimeError("Usuario no tiene configuración de WordPress")
+    config = get_wordpress_config_by_user(user_id)
+    if config is None:
+        raise RuntimeError("Usuario no tiene configuración de WordPress")
+    return config
 
 
-def test_wordpress_auth():
+def test_wordpress_auth(config):
     """
     Prueba la conexión con WordPress consultando /wp-json/wp/v2/users/me.
     Si responde 200, la auth funciona. Si no, algo está mal.
+
+    Args:
+        config: dict con wp_url, wp_username, wp_app_password
 
     Returns:
         bool: True si la conexión es exitosa
     """
     logger.info("🔍 Probando autenticación con WordPress...")
+    headers = build_wp_auth_headers(config['wp_username'], config['wp_app_password'])
     response = _request_with_retry(
         "GET",
-        f"{WP_URL}/wp-json/wp/v2/users/me",
-        headers=_get_wp_headers(),
+        f"{config['wp_url'].rstrip('/')}/wp-json/wp/v2/users/me",
+        headers=headers,
         timeout=20
     )
 
@@ -200,7 +189,7 @@ def _normalizar_slug(texto):
     return slug
 
 
-def categoria_existe(nombre):
+def categoria_existe(nombre, config):
     """
     Busca si ya existe una categoría en WordPress con ese nombre.
 
@@ -209,14 +198,15 @@ def categoria_existe(nombre):
 
     Args:
         nombre: string con el nombre de la categoría
+        config: dict con wp_url, wp_username, wp_app_password
 
     Returns:
         int con el ID de la categoría o None si no existe
     """
-    headers = _get_wp_headers()
+    headers = build_wp_auth_headers(config['wp_username'], config['wp_app_password'])
     response = _request_with_retry(
         "GET",
-        f"{WP_URL}/wp-json/wp/v2/categories",
+        f"{config['wp_url'].rstrip('/')}/wp-json/wp/v2/categories",
         headers=headers,
         params={'search': nombre, 'per_page': 10}
     )
@@ -227,7 +217,7 @@ def categoria_existe(nombre):
     return None
 
 
-def crear_categoria(nombre):
+def crear_categoria(nombre, config):
     """
     Crea una nueva categoría en WordPress.
 
@@ -236,6 +226,7 @@ def crear_categoria(nombre):
 
     Args:
         nombre: nombre de la categoría
+        config: dict con wp_url, wp_username, wp_app_password
 
     Returns:
         int con el ID de la categoría creada, o None si falló
@@ -246,10 +237,10 @@ def crear_categoria(nombre):
         "slug": _normalizar_slug(nombre)
     }
 
-    headers = _get_wp_headers()
+    headers = build_wp_auth_headers(config['wp_username'], config['wp_app_password'])
     response = _request_with_retry(
         "POST",
-        f"{WP_URL}/wp-json/wp/v2/categories",
+        f"{config['wp_url'].rstrip('/')}/wp-json/wp/v2/categories",
         headers=headers,
         json=data
     )
@@ -263,12 +254,13 @@ def crear_categoria(nombre):
         return None
 
 
-def obtener_o_crear_categoria(nombre):
+def obtener_o_crear_categoria(nombre, config):
     """
     Busca si la categoría existe en WordPress. Si no, la crea.
 
     Args:
         nombre: nombre de la categoría a buscar/crear
+        config: dict con wp_url, wp_username, wp_app_password
 
     Returns:
         int con el ID de la categoría, o None si no se pudo
@@ -277,12 +269,12 @@ def obtener_o_crear_categoria(nombre):
         print("   ⚠️  Sin categoría, se publica sin categoría")
         return None
 
-    cat_id = categoria_existe(nombre)
+    cat_id = categoria_existe(nombre, config)
     if cat_id:
         print(f"   ℹ️  Categoría ya existe: {nombre} (ID: {cat_id})")
         return cat_id
 
-    return crear_categoria(nombre)
+    return crear_categoria(nombre, config)
 
 
 # =============================================================================
@@ -404,7 +396,7 @@ def _limpiar_fotos_temporales_cluster(cluster_id):
         shutil.rmtree(path, ignore_errors=True)
 
 
-def subir_imagen_a_wordpress(url_imagen_externa):
+def subir_imagen_a_wordpress(url_imagen_externa, config):
     """
     Descarga una imagen desde una URL externa y la sube a WordPress como media.
 
@@ -417,6 +409,7 @@ def subir_imagen_a_wordpress(url_imagen_externa):
 
     Args:
         url_imagen_externa: URL completa de la imagen a subir
+        config: dict con wp_url, wp_username, wp_app_password
 
     Returns:
         tuple (bool, attachment_id o None, source_url o None)
@@ -491,13 +484,13 @@ def subir_imagen_a_wordpress(url_imagen_externa):
         }
         
         # Get auth headers (without Content-Type as requests will set it for multipart)
-        headers = _get_wp_headers()
+        headers = build_wp_auth_headers(config['wp_username'], config['wp_app_password'])
         # Remove Content-Type if present to avoid conflicts with multipart boundary
         headers.pop('Content-Type', None)
 
         resp = _request_with_retry(
             "POST",
-            f"{WP_URL}/wp-json/wp/v2/media",
+            f"{config['wp_url'].rstrip('/')}/wp-json/wp/v2/media",
             headers=headers,
             files=files,
             timeout=60
@@ -571,7 +564,7 @@ def _insertar_fotos_entre_parrafos(articulo_html, fotos_urls):
     return "\n".join(out)
 
 
-def publicar_en_wordpress(titulo, resumen, contenido, categoria_id=None, featured_media_id=None):
+def publicar_en_wordpress(titulo, resumen, contenido, config, categoria_id=None, featured_media_id=None):
     """
     Envía el artículo a WordPress via REST API.
 
@@ -588,6 +581,7 @@ def publicar_en_wordpress(titulo, resumen, contenido, categoria_id=None, feature
         titulo: string con el título del artículo
         resumen: string con el lead/resumen
         contenido: string con el cuerpo del artículo
+        config: dict con wp_url, wp_username, wp_app_password
         categoria_id: int o None con el ID de la categoría en WP
         featured_media_id: int o None con el attachment_id de la imagen destacada
 
@@ -615,10 +609,10 @@ def publicar_en_wordpress(titulo, resumen, contenido, categoria_id=None, feature
     if featured_media_id:
         post_data["featured_media"] = featured_media_id
 
-    headers = _get_wp_headers()
+    headers = build_wp_auth_headers(config['wp_username'], config['wp_app_password'])
     response = _request_with_retry(
         "POST",
-        f"{WP_URL}/wp-json/wp/v2/posts",
+        f"{config['wp_url'].rstrip('/')}/wp-json/wp/v2/posts",
         headers=headers,
         json=post_data,
         timeout=30
@@ -638,19 +632,21 @@ def publicar_en_wordpress(titulo, resumen, contenido, categoria_id=None, feature
 # FUNCIÓN PRINCIPAL: PUBLICAR UN CLUSTER
 # =============================================================================
 
-def publicar_cluster(cluster_id):
+def publicar_cluster(cluster_id, user_id=None):
     """
     Publica un cluster en WordPress.
 
     Flujo:
-      1. Obtener el cluster de la DB (debe tener contenido_ia)
-      2. Parsear el JSON con título, resumen, artículo, categoría
-      3. Buscar o crear la categoría en WordPress
-      4. Publicar en WP
-      5. Actualizar la DB con la URL de WP y marcar como publicado
+      1. Obtener la configuración de WordPress del usuario
+      2. Obtener el cluster de la DB (debe tener contenido_ia)
+      3. Parsear el JSON con título, resumen, artículo, categoría
+      4. Buscar o crear la categoría en WordPress
+      5. Publicar en WP
+      6. Actualizar la DB con la URL de WP y marcar como publicado
 
     Args:
         cluster_id: ID del cluster en clusters_editoriales
+        user_id: ID del usuario propietario de la configuración de WordPress
 
     Returns:
         dict con {ok: bool, url_wp: str|None, mensaje: str}
@@ -658,6 +654,8 @@ def publicar_cluster(cluster_id):
     print(f"\n{'='*80}")
     print(f"📤 PUBLICANDO CLUSTER ID: {cluster_id} EN WORDPRESS")
     print(f"{'='*80}\n")
+
+    config = _config_or_raise(user_id)
 
     conn = get_connection()
     try:
@@ -725,12 +723,12 @@ def publicar_cluster(cluster_id):
         print(f"   Fotos secundarias: {len(fotos_secundarias)}")
 
         # 1. Obtener o crear categoría en WordPress
-        cat_id = obtener_o_crear_categoria(categoria_nombre)
+        cat_id = obtener_o_crear_categoria(categoria_nombre, config)
 
         # 2. Subir imagen destacada si hay foto seleccionada
         featured_media_id = None
         if foto_principal:
-            exito_img, featured_media_id, _featured_url = subir_imagen_a_wordpress(foto_principal)
+            exito_img, featured_media_id, _featured_url = subir_imagen_a_wordpress(foto_principal, config)
             if not exito_img:
                 # La imagen falló pero seguimos con la publicación
                 print("   ⚠️  Continuando sin imagen destacada")
@@ -738,7 +736,7 @@ def publicar_cluster(cluster_id):
 
         fotos_secundarias_subidas = []
         for foto in fotos_secundarias:
-            exito_sec, _sec_id, sec_url = subir_imagen_a_wordpress(foto)
+            exito_sec, _sec_id, sec_url = subir_imagen_a_wordpress(foto, config)
             if exito_sec and sec_url:
                 fotos_secundarias_subidas.append(sec_url)
 
@@ -747,7 +745,7 @@ def publicar_cluster(cluster_id):
         # 3. Publicar en WordPress (con imagen asociada si hay)
         print("   Publicando en WordPress...")
         exito, url_wp = publicar_en_wordpress(
-            titulo, resumen, articulo_final, cat_id, featured_media_id
+            titulo, resumen, articulo_final, config, cat_id, featured_media_id
         )
 
         if not exito or not url_wp:
@@ -795,29 +793,38 @@ def publicar_cluster(cluster_id):
 
 if __name__ == "__main__":
     """
-    Uso directo: python publicapress.py [cluster_id]
+    Uso directo: python publicapress.py <user_id> [cluster_id]
 
-    Sin argumentos: busca clusters con estado_publicacion = 'generado'
+    El user_id identifica el usuario cuya configuración de WordPress se usará.
+
+    Sin cluster_id: busca clusters con estado_publicacion = 'generado'
                     y publica el primero.
 
-    Con argumentos:  python publicapress.py 42
-                    publica el cluster 42 específicamente.
+    Con cluster_id: python publicapress.py 3 42
+                    publica el cluster 42 con la config del usuario 3.
     """
     import sys
 
     print("🚀 Iniciando publicapress.py — Publicación en WordPress")
 
+    if len(sys.argv) < 2:
+        print("❌ Uso: python publicapress.py <user_id> [cluster_id]")
+        sys.exit(1)
+
+    user_id = int(sys.argv[1])
+    config = _config_or_raise(user_id)
+
     # 1. Probar conexión con WP antes de hacer nada
-    if not test_wordpress_auth():
+    if not test_wordpress_auth(config):
         print("❌ Deteniendo script por fallo de autenticación.")
         sys.exit(1)
 
     # 2. Buscar cluster a publicar
     cluster_id = None
 
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 2:
         # Argumento: ID del cluster
-        cluster_id = int(sys.argv[1])
+        cluster_id = int(sys.argv[2])
         print(f"📌 Modo manual: cluster {cluster_id}")
     else:
         # Buscar automáticamente el primer cluster listo
@@ -842,7 +849,7 @@ if __name__ == "__main__":
         sys.exit(0)
 
     # 3. Publicar
-    resultado = publicar_cluster(cluster_id)
+    resultado = publicar_cluster(cluster_id, user_id)
 
     if resultado["ok"]:
         print(f"\n✅ Done. WordPress: {resultado['url_wp']}")

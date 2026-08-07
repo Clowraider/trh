@@ -1300,7 +1300,7 @@ def test_editor_jefe_quick_publish_saves_selected_photos_and_redirects_to_cluste
     monkeypatch.setattr(
         panel.publicapress,
         "publicar_cluster",
-        lambda cluster_id: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+        lambda cluster_id, user_id=None: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
     )
     monkeypatch.setitem(
         panel.app.config,
@@ -2048,7 +2048,7 @@ def test_publicar_cluster_removes_saved_recommendation_on_success(monkeypatch):
     monkeypatch.setattr(
         panel.publicapress,
         "publicar_cluster",
-        lambda cluster_id: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+        lambda cluster_id, user_id=None: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
     )
     monkeypatch.setitem(
         panel.app.config,
@@ -2056,8 +2056,7 @@ def test_publicar_cluster_removes_saved_recommendation_on_success(monkeypatch):
         lambda factory, cluster_id: removed.append((factory, cluster_id)),
     )
 
-    client = panel.app.test_client()
-    response = client.post("/publicar/7", follow_redirects=False)
+    response = panel.app.test_client().post("/publicar/7", follow_redirects=False)
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
@@ -2065,6 +2064,7 @@ def test_publicar_cluster_removes_saved_recommendation_on_success(monkeypatch):
 
 
 def test_publicar_cluster_blocks_when_editorial_review_is_required(monkeypatch):
+
     import app as panel
 
     publish_calls = []
@@ -2081,7 +2081,7 @@ def test_publicar_cluster_blocks_when_editorial_review_is_required(monkeypatch):
     monkeypatch.setattr(
         panel.publicapress,
         "publicar_cluster",
-        lambda cluster_id: publish_calls.append(cluster_id) or {"ok": True, "url_wp": "https://wp.test/7"},
+        lambda cluster_id, user_id=None: publish_calls.append(cluster_id) or {"ok": True, "url_wp": "https://wp.test/7"},
     )
 
     client = panel.app.test_client()
@@ -2146,7 +2146,7 @@ def test_publish_succeeds_after_editorial_review_approval(monkeypatch):
     monkeypatch.setattr(
         panel.publicapress,
         "publicar_cluster",
-        lambda cluster_id: published.append(cluster_id) or {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+        lambda cluster_id, user_id=None: published.append(cluster_id) or {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
     )
     monkeypatch.setitem(
         panel.app.config,
@@ -2176,7 +2176,7 @@ def test_publicar_cluster_preserves_success_when_cleanup_fails(monkeypatch):
     monkeypatch.setattr(
         panel.publicapress,
         "publicar_cluster",
-        lambda cluster_id: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
+        lambda cluster_id, user_id=None: {"ok": True, "url_wp": f"https://wp.test/{cluster_id}"},
     )
     monkeypatch.setitem(
         panel.app.config,

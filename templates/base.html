@@ -23,6 +23,11 @@
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('index') }}">Panel</a>
           </li>
+          {% if g.current_user %}
+          <li class="nav-item">
+            <a class="nav-link" href="{{ url_for('config.index') }}">Configuración</a>
+          </li>
+          {% endif %}
           {% if g.current_user and g.current_user.is_admin %}
           <li class="nav-item">
             <a class="nav-link" href="{{ url_for('admin.list_users_view') }}">Usuarios</a>

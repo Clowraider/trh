@@ -34,6 +34,8 @@ def client(monkeypatch, tmp_path):
     "path,method",
     [
         ("/", "GET"),
+        ("/config", "GET"),
+        ("/config", "POST"),
         ("/editor-jefe-ia", "GET"),
         ("/editor-jefe-ia", "POST"),
         ("/reportes/calidad", "GET"),
