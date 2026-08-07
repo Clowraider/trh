@@ -4,6 +4,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+# Security defaults for the test suite. Existing route tests run without auth
+# to preserve their original behavior; auth-specific tests override these.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+os.environ.setdefault("AUTH_REQUIRED", "False")
+
 os.environ.setdefault(
     "ARTICLE_WRITER_SYSTEM_PROMPT_FILE",
     str(PROJECT_ROOT / "prompts/article_writer_system_prompt.txt"),

@@ -5,6 +5,8 @@ import sys
 import os
 import json
 import uuid
+import logging
+import secrets
 from datetime import datetime
 from pathlib import Path
 
@@ -38,14 +40,31 @@ from trh.infrastructure.html_sanitizer import sanitize_article_markup
 from trh.publication import publicador, publicapress
 from trh.publication.publicador import ARTICLE_CATEGORIES
 
+logger = logging.getLogger(__name__)
+
+
+def _load_secret_key():
+    key = os.getenv("SECRET_KEY")
+    if key:
+        return key
+    if os.getenv("FLASK_ENV", "production").lower() == "development":
+        logger.warning(
+            "SECRET_KEY no está configurado. Generando clave temporal solo para desarrollo. "
+            "Configure SECRET_KEY en .env antes de desplegar en producción."
+        )
+        return secrets.token_hex(32)
+    raise RuntimeError("SECRET_KEY es obligatorio en producción. Configúrelo en el entorno.")
+
+
 app = Flask(
     __name__,
     template_folder=str(PROJECT_ROOT / "templates"),
     static_folder=str(PROJECT_ROOT / "static"),
 )
 
-# Secret key for sessions (Flask requires one even when auth is not session-based)
-app.secret_key = 'trh-mvp-secret-key-cambiar-en-produccion'
+app.secret_key = _load_secret_key()
+app.config["SESSION_LIFETIME_HOURS"] = int(os.getenv("SESSION_LIFETIME_HOURS", "24"))
+app.config["AUTH_REQUIRED"] = os.getenv("AUTH_REQUIRED", "True").lower() in ("true", "1", "yes")
 
 TIPOS_KEYWORD_PERMITIDOS = ('keyword', 'persona', 'lugar', 'organizacion')
 
