@@ -19,6 +19,7 @@ _RELOAD_DEPENDENCY_MODULES = (
     "trh.editorial.editor_jefe_ia",
     "trh.editorial",
     "pipeline.seleccionar_publicables",
+    "trh.web.auth_routes",
 )
 
 
@@ -26,7 +27,12 @@ def _load_web_app_module():
     cached_module = sys.modules.get("trh.web.app")
     if cached_module is not None:
         for module_name in _RELOAD_DEPENDENCY_MODULES:
-            sys.modules.pop(module_name, None)
+            dependency = sys.modules.get(module_name)
+            if dependency is not None:
+                try:
+                    importlib.reload(dependency)
+                except Exception:
+                    sys.modules.pop(module_name, None)
         return importlib.reload(cached_module)
     return importlib.import_module("trh.web.app")
 

@@ -26,8 +26,8 @@ def create_session_for_user(
     user_id: int,
     lifetime_hours: int = 24,
     request_obj: Request | None = None,
-) -> tuple[str, str]:
-    """Create a session and return (session_token, csrf_token)."""
+) -> tuple[str, str, datetime]:
+    """Create a session and return (session_token, csrf_token, expires_at)."""
     session_token = _generate_token()
     csrf_token = _generate_token()
     expires_at = datetime.utcnow() + timedelta(hours=lifetime_hours)
@@ -47,7 +47,7 @@ def create_session_for_user(
         ip_address=ip_address,
         user_agent=user_agent,
     )
-    return session_token, csrf_token
+    return session_token, csrf_token, expires_at
 
 
 def validate_session_token(session_token: str | None) -> dict[str, Any] | None:

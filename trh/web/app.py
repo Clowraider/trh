@@ -66,6 +66,28 @@ app.secret_key = _load_secret_key()
 app.config["SESSION_LIFETIME_HOURS"] = int(os.getenv("SESSION_LIFETIME_HOURS", "24"))
 app.config["AUTH_REQUIRED"] = os.getenv("AUTH_REQUIRED", "True").lower() in ("true", "1", "yes")
 
+from trh.web.auth_routes import bp as auth_bp
+
+app.register_blueprint(auth_bp)
+
+
+@app.before_request
+def _csrf_check():
+    """Validate CSRF tokens on state-changing requests."""
+    if not app.config.get("AUTH_REQUIRED", True):
+        return None
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    if request.endpoint == "static":
+        return None
+    from trh.auth.csrf import validate_csrf_request
+    result = validate_csrf_request()
+    if result is not None:
+        message, status = result
+        return jsonify({"error": message}), status
+    return None
+
+
 TIPOS_KEYWORD_PERMITIDOS = ('keyword', 'persona', 'lugar', 'organizacion')
 
 TEMP_UPLOAD_BASE_DIR = str(PROJECT_ROOT / 'static' / 'uploads' / 'tmp')

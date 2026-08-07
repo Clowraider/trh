@@ -25,12 +25,13 @@ def test_create_session_for_user_returns_tokens_and_calls_repository(patch_repos
     request.remote_addr = "192.168.1.1"
     request.user_agent.string = "TestAgent/1.0"
 
-    session_token, csrf_token = sessions.create_session_for_user(
+    session_token, csrf_token, expires_at = sessions.create_session_for_user(
         user_id=1, lifetime_hours=24, request_obj=request
     )
 
     assert session_token
     assert csrf_token
+    assert expires_at is not None
     assert session_token != csrf_token
     patch_repository["create"].assert_called_once()
     args = patch_repository["create"].call_args.kwargs
