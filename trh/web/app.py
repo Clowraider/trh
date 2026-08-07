@@ -67,8 +67,10 @@ app.config["SESSION_LIFETIME_HOURS"] = int(os.getenv("SESSION_LIFETIME_HOURS", "
 app.config["AUTH_REQUIRED"] = os.getenv("AUTH_REQUIRED", "True").lower() in ("true", "1", "yes")
 
 from trh.web.auth_routes import bp as auth_bp
+from trh.web.admin_routes import bp as admin_bp
 
 app.register_blueprint(auth_bp)
+app.register_blueprint(admin_bp)
 
 
 @app.before_request
