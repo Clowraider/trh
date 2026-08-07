@@ -35,7 +35,8 @@ def client(monkeypatch, tmp_path):
     [
         ("/", "GET"),
         ("/config", "GET"),
-        ("/config", "POST"),
+        ("/config/fuentes", "POST"),
+        ("/config/wordpress", "POST"),
         ("/editor-jefe-ia", "GET"),
         ("/editor-jefe-ia", "POST"),
         ("/reportes/calidad", "GET"),

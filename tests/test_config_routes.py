@@ -109,9 +109,7 @@ def test_config_get_renders_form_for_authenticated_user(client, monkeypatch, sam
     assert not re.search(r'id="source_2"[^>]*checked', html)
 
 
-def test_config_post_saves_valid_config_and_subscriptions(
-    client, monkeypatch, sample_sources
-):
+def test_config_post_wordpress_saves_config(client, monkeypatch, sample_sources):
     _login_as_user(client, monkeypatch)
 
     with (
@@ -135,20 +133,15 @@ def test_config_post_saves_valid_config_and_subscriptions(
             "trh.web.config_routes.upsert_wordpress_config",
             return_value=None,
         ) as mock_upsert,
-        patch(
-            "trh.web.config_routes.subscribe_user_to_sources",
-            return_value=None,
-        ) as mock_subscribe,
     ):
         response = client.post(
-            "/config",
+            "/config/wordpress",
             data={
                 "csrf_token": "csrf-token",
                 "wp_url": "https://wp.test/",
                 "wp_username": "admin",
                 "wp_app_password": "app-password",
                 "wp_app_password_confirm": "app-password",
-                "source_ids": ["1", "3"],
             },
             follow_redirects=False,
         )
@@ -158,7 +151,6 @@ def test_config_post_saves_valid_config_and_subscriptions(
     mock_validate.assert_called_once_with(
         "https://wp.test/", "admin", "app-password"
     )
-    mock_subscribe.assert_called_once_with(2, [1, 3])
     mock_upsert.assert_called_once_with(
         user_id=2,
         wp_url="https://wp.test/",
@@ -167,7 +159,7 @@ def test_config_post_saves_valid_config_and_subscriptions(
     )
 
 
-def test_config_post_rejects_mismatched_passwords(client, monkeypatch, sample_sources):
+def test_config_post_wordpress_rejects_mismatched_passwords(client, monkeypatch, sample_sources):
     _login_as_user(client, monkeypatch)
 
     with (
@@ -188,14 +180,13 @@ def test_config_post_rejects_mismatched_passwords(client, monkeypatch, sample_so
         ) as mock_validate,
     ):
         response = client.post(
-            "/config",
+            "/config/wordpress",
             data={
                 "csrf_token": "csrf-token",
                 "wp_url": "https://wp.test/",
                 "wp_username": "admin",
                 "wp_app_password": "app-password",
                 "wp_app_password_confirm": "other-password",
-                "source_ids": ["1"],
             },
         )
 
@@ -204,9 +195,7 @@ def test_config_post_rejects_mismatched_passwords(client, monkeypatch, sample_so
     mock_validate.assert_not_called()
 
 
-def test_config_post_rejects_wordpress_validation_failure(
-    client, monkeypatch, sample_sources
-):
+def test_config_post_wordpress_rejects_validation_failure(client, monkeypatch, sample_sources):
     _login_as_user(client, monkeypatch)
 
     with (
@@ -228,14 +217,13 @@ def test_config_post_rejects_wordpress_validation_failure(
         ) as mock_validate,
     ):
         response = client.post(
-            "/config",
+            "/config/wordpress",
             data={
                 "csrf_token": "csrf-token",
                 "wp_url": "https://wp.test/",
                 "wp_username": "admin",
                 "wp_app_password": "app-password",
                 "wp_app_password_confirm": "app-password",
-                "source_ids": ["2"],
             },
         )
 
@@ -244,7 +232,7 @@ def test_config_post_rejects_wordpress_validation_failure(
     mock_validate.assert_called_once()
 
 
-def test_config_post_rejects_invalid_source_ids(client, monkeypatch, sample_sources):
+def test_config_post_sources_saves_subscriptions(client, monkeypatch, sample_sources):
     _login_as_user(client, monkeypatch)
 
     with (
@@ -261,8 +249,72 @@ def test_config_post_rejects_invalid_source_ids(client, monkeypatch, sample_sour
             return_value=set(),
         ),
         patch(
-            "trh.web.config_routes.validate_wordpress_credentials",
-            return_value=(True, "OK"),
+            "trh.web.config_routes.subscribe_user_to_sources",
+            return_value=None,
+        ) as mock_subscribe,
+    ):
+        response = client.post(
+            "/config/fuentes",
+            data={
+                "csrf_token": "csrf-token",
+                "source_ids": ["1", "3"],
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    assert "/config" in response.location
+    mock_subscribe.assert_called_once_with(2, [1, 3])
+
+
+def test_config_post_sources_saves_empty_selection(client, monkeypatch, sample_sources):
+    _login_as_user(client, monkeypatch)
+
+    with (
+        patch(
+            "trh.web.config_routes.get_wordpress_config_by_user",
+            return_value=None,
+        ),
+        patch(
+            "trh.web.config_routes.list_active_sources",
+            return_value=sample_sources,
+        ),
+        patch(
+            "trh.web.config_routes.get_subscribed_source_ids",
+            return_value={1, 2},
+        ),
+        patch(
+            "trh.web.config_routes.subscribe_user_to_sources",
+            return_value=None,
+        ) as mock_subscribe,
+    ):
+        response = client.post(
+            "/config/fuentes",
+            data={
+                "csrf_token": "csrf-token",
+            },
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 302
+    mock_subscribe.assert_called_once_with(2, [])
+
+
+def test_config_post_sources_rejects_invalid_source_ids(client, monkeypatch, sample_sources):
+    _login_as_user(client, monkeypatch)
+
+    with (
+        patch(
+            "trh.web.config_routes.get_wordpress_config_by_user",
+            return_value=None,
+        ),
+        patch(
+            "trh.web.config_routes.list_active_sources",
+            return_value=sample_sources,
+        ),
+        patch(
+            "trh.web.config_routes.get_subscribed_source_ids",
+            return_value=set(),
         ),
         patch(
             "trh.web.config_routes.subscribe_user_to_sources",
@@ -270,13 +322,9 @@ def test_config_post_rejects_invalid_source_ids(client, monkeypatch, sample_sour
         ) as mock_subscribe,
     ):
         response = client.post(
-            "/config",
+            "/config/fuentes",
             data={
                 "csrf_token": "csrf-token",
-                "wp_url": "https://wp.test/",
-                "wp_username": "admin",
-                "wp_app_password": "app-password",
-                "wp_app_password_confirm": "app-password",
                 "source_ids": ["99"],
             },
         )
