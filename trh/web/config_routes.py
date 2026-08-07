@@ -3,6 +3,11 @@
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 
 from trh.auth.decorators import require_auth
+from trh.sources.repository import (
+    get_subscribed_source_ids,
+    list_active_sources,
+    subscribe_user_to_sources,
+)
 from trh.wordpress.repository import (
     get_wordpress_config_by_user,
     upsert_wordpress_config,
@@ -10,15 +15,6 @@ from trh.wordpress.repository import (
 from trh.wordpress.validator import validate_wordpress_credentials
 
 bp = Blueprint("config", __name__, url_prefix="/config")
-
-_FAKE_NEWS_SOURCES = [
-    ("el_liberal", "El Liberal"),
-    ("nuevo_diario", "Nuevo Diario"),
-    ("la_voz", "La Voz del Interior"),
-    ("clarin", "Clarín"),
-    ("lanacion", "La Nación"),
-    ("infobae", "Infobae"),
-]
 
 
 def _validate_config_form(form):
@@ -41,18 +37,32 @@ def _validate_config_form(form):
     return errors, wp_url, wp_username, wp_app_password
 
 
+def _selected_source_ids_from_form(form):
+    ids = set()
+    for raw in form.getlist("source_ids"):
+        try:
+            ids.add(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return ids
+
+
 @bp.route("", methods=["GET", "POST"])
 @require_auth
 def index():
     user_id = g.current_user.get("user_id")
     config = get_wordpress_config_by_user(user_id)
+    sources = list_active_sources()
 
     if request.method == "GET":
         return render_template(
             "config/index.html",
             config=config,
-            news_sources=_FAKE_NEWS_SOURCES,
+            sources=sources,
+            subscribed_source_ids=get_subscribed_source_ids(user_id),
         )
+
+    selected_source_ids = _selected_source_ids_from_form(request.form)
 
     errors, wp_url, wp_username, wp_app_password = _validate_config_form(request.form)
     if errors:
@@ -65,7 +75,8 @@ def index():
                 "wp_username": wp_username,
                 "wp_app_password": "",
             },
-            news_sources=_FAKE_NEWS_SOURCES,
+            sources=sources,
+            subscribed_source_ids=selected_source_ids,
         ), 400
 
     ok, message = validate_wordpress_credentials(
@@ -82,7 +93,23 @@ def index():
                 "wp_username": wp_username,
                 "wp_app_password": "",
             },
-            news_sources=_FAKE_NEWS_SOURCES,
+            sources=sources,
+            subscribed_source_ids=selected_source_ids,
+        ), 400
+
+    try:
+        subscribe_user_to_sources(user_id, list(selected_source_ids))
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return render_template(
+            "config/index.html",
+            config={
+                "wp_url": wp_url,
+                "wp_username": wp_username,
+                "wp_app_password": "",
+            },
+            sources=sources,
+            subscribed_source_ids=selected_source_ids,
         ), 400
 
     upsert_wordpress_config(
@@ -91,5 +118,5 @@ def index():
         wp_username=wp_username,
         wp_app_password=wp_app_password,
     )
-    flash("Configuración de WordPress guardada correctamente.", "success")
+    flash("Configuración guardada correctamente.", "success")
     return redirect(url_for("config.index"))
