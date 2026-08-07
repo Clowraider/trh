@@ -41,10 +41,15 @@ def test_load_secret_key_generates_temporary_key_in_development(monkeypatch):
     assert len(web_app.app.secret_key) >= 32
 
 
-def test_load_secret_key_fails_closed_in_production(monkeypatch):
+def test_load_secret_key_fails_closed_in_production(monkeypatch, tmp_path):
     _clear_app_modules()
     monkeypatch.delenv("SECRET_KEY", raising=False)
     monkeypatch.setenv("FLASK_ENV", "production")
+    # Point the env loader at a non-existent path so the production check only
+    # sees the environment, not any local .env file.
+    monkeypatch.setattr(
+        "trh.infrastructure.env_loader.DEFAULT_ENV_PATH", tmp_path / "no_env"
+    )
 
     with pytest.raises(RuntimeError, match="SECRET_KEY"):
         importlib.import_module("trh.web.app")

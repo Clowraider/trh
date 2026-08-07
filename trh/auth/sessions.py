@@ -6,7 +6,7 @@ truth for validity and expiration.
 """
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from flask import Request, Response
@@ -16,6 +16,7 @@ from trh.auth.repository import (
     delete_session as repo_delete_session,
     get_session_by_token as repo_get_session_by_token,
 )
+from trh.auth.time_utils import utc_now
 
 
 def _generate_token() -> str:
@@ -30,7 +31,7 @@ def create_session_for_user(
     """Create a session and return (session_token, csrf_token, expires_at)."""
     session_token = _generate_token()
     csrf_token = _generate_token()
-    expires_at = datetime.utcnow() + timedelta(hours=lifetime_hours)
+    expires_at = utc_now() + timedelta(hours=lifetime_hours)
 
     ip_address = None
     user_agent = None
@@ -58,9 +59,12 @@ def validate_session_token(session_token: str | None) -> dict[str, Any] | None:
     if session is None:
         return None
     expires_at = session.get("expires_at")
-    if expires_at is not None and expires_at < datetime.utcnow():
-        repo_delete_session(session_token)
-        return None
+    if expires_at is not None:
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at < utc_now():
+            repo_delete_session(session_token)
+            return None
     return dict(session)
 
 

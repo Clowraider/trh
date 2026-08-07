@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from trh.auth import repository
+from trh.auth.time_utils import utc_now
 
 
 @pytest.fixture
@@ -62,7 +63,7 @@ def test_update_user_password_executes_update(mock_connection):
 
 def test_create_session_inserts_row(mock_connection):
     _conn, cursor = mock_connection
-    expires = datetime.utcnow() + timedelta(hours=24)
+    expires = utc_now() + timedelta(hours=24)
 
     repository.create_session(
         session_token="token",

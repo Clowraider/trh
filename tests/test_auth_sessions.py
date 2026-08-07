@@ -1,9 +1,10 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from trh.auth import sessions
+from trh.auth.time_utils import utc_now
 
 
 @pytest.fixture(autouse=True)
@@ -42,7 +43,7 @@ def test_create_session_for_user_returns_tokens_and_calls_repository(patch_repos
 
 
 def test_validate_session_token_returns_data_for_valid_token(patch_repository):
-    future = datetime.utcnow() + timedelta(hours=1)
+    future = utc_now() + timedelta(hours=1)
     patch_repository["get"].return_value = {
         "session_token": "token",
         "expires_at": future,
@@ -64,7 +65,7 @@ def test_validate_session_token_returns_none_for_missing_token(patch_repository)
 
 
 def test_validate_session_token_deletes_expired_token(patch_repository):
-    past = datetime.utcnow() - timedelta(hours=1)
+    past = utc_now() - timedelta(hours=1)
     patch_repository["get"].return_value = {
         "session_token": "token",
         "expires_at": past,

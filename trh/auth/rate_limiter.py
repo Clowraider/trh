@@ -6,7 +6,9 @@ store such as Redis.
 """
 
 import threading
-from datetime import datetime, timedelta
+from datetime import timedelta
+
+from trh.auth.time_utils import utc_now
 
 
 class RateLimiter:
@@ -18,7 +20,7 @@ class RateLimiter:
 
     def is_allowed(self, key: str) -> bool:
         """Return True if the key is within its attempt budget."""
-        now = datetime.utcnow()
+        now = utc_now()
         with self._lock:
             attempts = [t for t in self._store.get(key, []) if now - t < self.window]
             if len(attempts) >= self.max_attempts:
@@ -35,6 +37,6 @@ class RateLimiter:
 
     def attempt_count(self, key: str) -> int:
         """Return the current number of attempts in the window."""
-        now = datetime.utcnow()
+        now = utc_now()
         with self._lock:
             return len([t for t in self._store.get(key, []) if now - t < self.window])

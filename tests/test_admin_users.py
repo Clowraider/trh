@@ -1,6 +1,9 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+
+from trh.auth.time_utils import utc_now
 
 
 def _patch_admin_repository(monkeypatch, users=None, existing_username=None, existing_email=None):
@@ -64,7 +67,7 @@ def _login_as_admin(client, monkeypatch):
         "trh.auth.sessions.repo_get_session_by_token",
         lambda _token: {
             "session_token": "session-token",
-            "expires_at": __import__("datetime").datetime.utcnow() + __import__("datetime").timedelta(hours=1),
+            "expires_at": utc_now() + timedelta(hours=1),
             "csrf_token": "csrf-token",
             "user_id": 1,
             "usuario": "admin",
@@ -87,7 +90,7 @@ def test_admin_users_list_requires_admin(client, monkeypatch):
         "trh.auth.sessions.repo_get_session_by_token",
         lambda _token: {
             "session_token": "session-token",
-            "expires_at": __import__("datetime").datetime.utcnow() + __import__("datetime").timedelta(hours=1),
+            "expires_at": utc_now() + timedelta(hours=1),
             "csrf_token": "csrf-token",
             "user_id": 1,
             "usuario": "user",

@@ -1,7 +1,9 @@
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from trh.auth.time_utils import utc_now
 
 
 def _patch_auth(monkeypatch, user=None, password_valid=True):
@@ -20,7 +22,7 @@ def _patch_auth(monkeypatch, user=None, password_valid=True):
 
 
 def _create_session_patch(monkeypatch, token="session-token", csrf="csrf-token"):
-    expires = datetime.utcnow() + timedelta(hours=24)
+    expires = utc_now() + timedelta(hours=24)
     monkeypatch.setattr(
         "trh.web.auth_routes.create_session_for_user",
         lambda **kwargs: (token, csrf, expires),
@@ -220,7 +222,7 @@ def test_logout_deletes_session_and_cookie(client, monkeypatch):
         "trh.auth.sessions.repo_get_session_by_token",
         lambda _token: {
             "session_token": "session-token",
-            "expires_at": datetime.utcnow() + timedelta(hours=1),
+            "expires_at": utc_now() + timedelta(hours=1),
             "csrf_token": "csrf-token",
             "usuario": "admin",
             "is_admin": True,
