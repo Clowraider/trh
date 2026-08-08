@@ -307,8 +307,10 @@ def _enriquecer_recomendaciones_guardadas_para_publicacion(saved_recommendations
         estado = enriched_item.get('estado_publicacion') or 'pendiente'
         if estado == 'generado' and cluster:
             enriched_item['quick_publish_cluster'] = cluster
-            enriched_item['quick_publish_news'] = obtener_noticias_cluster(
-                enriched_item['cluster_id']
+            enriched_item['quick_publish_news'] = (
+                get_cluster_news_for_user(enriched_item['cluster_id'], user_id)
+                if user_id is not None
+                else obtener_noticias_cluster(enriched_item['cluster_id'])
             )
         enriched.append(enriched_item)
     return enriched
