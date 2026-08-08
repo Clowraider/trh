@@ -73,9 +73,11 @@ from trh.web.config_routes import bp as config_bp
 from trh.auth.decorators import require_auth
 from trh.sources.repository import sync_news_sources
 from trh.clusters.repository import (
+    get_cluster_news_for_user,
     get_or_create_user_cluster_state,
     get_user_cluster_by_id,
     list_clusters_for_user,
+    save_user_cluster_content,
     update_user_cluster_state,
 )
 
@@ -137,7 +139,10 @@ MAX_UPLOAD_FILES = 6
 app.config['MAX_CONTENT_LENGTH'] = MAX_UPLOAD_BYTES * MAX_UPLOAD_FILES
 
 
-def _update_cluster_nota_ia(cluster_id, nota_ia):
+def _update_cluster_nota_ia(cluster_id, nota_ia, user_id=None):
+    if user_id is not None:
+        update_user_cluster_state(user_id, cluster_id, nota_ia=nota_ia)
+        return
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -169,7 +174,7 @@ def _generate_cluster_article(cluster_id, nota_ia=None, cluster=None, allowed_st
     effective_nota_ia = stored_nota_ia if nota_ia is None else nota_ia.strip()
 
     if nota_ia is not None and effective_nota_ia != stored_nota_ia:
-        _update_cluster_nota_ia(cluster_id, effective_nota_ia)
+        _update_cluster_nota_ia(cluster_id, effective_nota_ia, user_id=user_id)
 
     generator = generator or app.config.get(
         "EDITOR_JEFE_ARTICLE_GENERATOR", publicador.generar_articulo_para_cluster
@@ -253,7 +258,15 @@ def _seleccion_fotos_desde_form(cluster_id, form, noticias=None):
     return foto_principal, fotos_limpias[:2]
 
 
-def _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_secundarias):
+def _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_secundarias, user_id=None):
+    if user_id is not None:
+        save_user_cluster_content(
+            user_id,
+            cluster_id,
+            foto_principal=foto_principal,
+            fotos_secundarias=fotos_secundarias,
+        )
+        return
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -1393,13 +1406,14 @@ def cluster_detalle(cluster_id):
     - Artículo generado (si ya se generó)
     - Botón "Publicar en WordPress" (si está generado)
     """
-    cluster = _obtener_cluster_para_usuario(cluster_id, _current_user_id())
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
 
     if not cluster:
         flash(f"Cluster {cluster_id} no encontrado", "danger")
         return redirect(url_for('index'))
 
-    noticias = obtener_noticias_cluster(cluster_id)
+    noticias = get_cluster_news_for_user(cluster_id, user_id)
     contenido_ia = contenido_ia_para_panel(
         parse_contenido_ia(cluster.get('contenido_ia'))
     )
@@ -1520,7 +1534,8 @@ def preview_articulo(cluster_id):
     - Guardar cambios
     - Publicar en WordPress
     """
-    cluster = _obtener_cluster_para_usuario(cluster_id, _current_user_id())
+    user_id = _current_user_id()
+    cluster = _obtener_cluster_para_usuario(cluster_id, user_id)
     if not cluster:
         flash("Cluster no encontrado", "danger")
         return redirect(url_for('index'))
@@ -1530,7 +1545,7 @@ def preview_articulo(cluster_id):
         flash("Primero generá el artículo con IA", "info")
         return redirect(url_for('cluster_detalle', cluster_id=cluster_id))
 
-    noticias = obtener_noticias_cluster(cluster_id)
+    noticias = get_cluster_news_for_user(cluster_id, user_id)
     contenido_ia = parse_contenido_ia(cluster.get('contenido_ia'))
 
     return render_template(
@@ -1561,24 +1576,33 @@ def guardar_edicion(cluster_id):
 
     nota_editor = request.form.get('nota_editor', '')
 
-    conn = get_connection()
+    user_id = _current_user_id()
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE clusters_editoriales
-                SET
-                    contenido_ia = %s,
-                    nota_editor = %s,
-                    actualizado_en = NOW()
-                WHERE id = %s
-            """, (json.dumps(contenido, ensure_ascii=False), nota_editor, cluster_id))
-        conn.commit()
+        if user_id is not None:
+            save_user_cluster_content(
+                user_id,
+                cluster_id,
+                contenido_ia=contenido,
+                nota_editor=nota_editor or None,
+            )
+        else:
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        UPDATE clusters_editoriales
+                        SET
+                            contenido_ia = %s,
+                            nota_editor = %s,
+                            actualizado_en = NOW()
+                        WHERE id = %s
+                    """, (json.dumps(contenido, ensure_ascii=False), nota_editor, cluster_id))
+                conn.commit()
+            finally:
+                conn.close()
         flash("✅ Cambios guardados", "success")
     except Exception as e:
-        conn.rollback()
         flash(f"❌ Error guardando: {e}", "danger")
-    finally:
-        conn.close()
 
     return redirect(url_for('preview_articulo', cluster_id=cluster_id))
 
@@ -1612,11 +1636,12 @@ def publicar_cluster(cluster_id):
     redirect_to_cluster = request.form.get('return_to') == 'cluster_detalle'
     if request.form.get('save_photos_before_publish') == '1':
         try:
+            noticias_filtradas = get_cluster_news_for_user(cluster_id, user_id)
             foto_principal, fotos_secundarias = _seleccion_fotos_desde_form(
-                cluster_id, request.form
+                cluster_id, request.form, noticias=noticias_filtradas
             )
             _guardar_seleccion_fotos(
-                cluster_id, foto_principal, fotos_secundarias
+                cluster_id, foto_principal, fotos_secundarias, user_id=user_id
             )
         except Exception as e:
             flash(f"❌ Error guardando fotos: {e}", "danger")
@@ -1719,8 +1744,12 @@ def set_foto_principal(cluster_id):
     """
     Guarda la foto principal y hasta 2 fotos secundarias elegidas por el editor.
     """
-    foto_principal, fotos_limpias = _seleccion_fotos_desde_form(cluster_id, request.form)
-    _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_limpias)
+    user_id = _current_user_id()
+    noticias_filtradas = get_cluster_news_for_user(cluster_id, user_id)
+    foto_principal, fotos_limpias = _seleccion_fotos_desde_form(
+        cluster_id, request.form, noticias=noticias_filtradas
+    )
+    _guardar_seleccion_fotos(cluster_id, foto_principal, fotos_limpias, user_id=user_id)
     flash("Fotos guardadas", "success")
 
     return redirect(url_for('cluster_detalle', cluster_id=cluster_id))

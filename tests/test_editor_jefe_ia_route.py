@@ -764,7 +764,7 @@ def test_single_cluster_generation_route_updates_note_and_reuses_generator(monke
     monkeypatch.setattr(
         panel,
         "_update_cluster_nota_ia",
-        lambda cluster_id, nota_ia: updates.append((cluster_id, nota_ia)),
+        lambda cluster_id, nota_ia, user_id=None: updates.append((cluster_id, nota_ia, user_id)),
     )
     panel.app.config["EDITOR_JEFE_ARTICLE_GENERATOR"] = (
         lambda cluster_id, nota_ia="", user_id=None: generator_calls.append((cluster_id, nota_ia, user_id))
@@ -775,7 +775,7 @@ def test_single_cluster_generation_route_updates_note_and_reuses_generator(monke
 
     assert response.status_code == 302
     assert response.headers["Location"].endswith("/cluster/7")
-    assert updates == [(7, "nueva nota")]
+    assert updates == [(7, "nueva nota", None)]
     assert generator_calls == [(7, "nueva nota", None)]
     assert pop_flashes(client) == [("success", "✅ Artículo generado correctamente")]
 
@@ -1154,8 +1154,8 @@ def test_cluster_detail_keeps_source_news_visible_when_split_actions_are_blocked
     )
     monkeypatch.setattr(
         panel,
-        "obtener_noticias_cluster",
-        lambda _cluster_id: [
+        "get_cluster_news_for_user",
+        lambda cluster_id, user_id: [
             {
                 "id": 11,
                 "fuente": "Fuente visible",
@@ -1176,6 +1176,51 @@ def test_cluster_detail_keeps_source_news_visible_when_split_actions_are_blocked
     assert b"https://example.com/nota-visible" in response.data
     assert b"/split-cluster/7" not in response.data
     assert b"name=\"noticias_split\"" not in response.data
+
+
+def test_cluster_detail_filters_news_by_user_subscribed_sources(monkeypatch):
+    import app as panel
+
+    configure_panel(panel)
+    seen = []
+
+    monkeypatch.setattr(
+        panel,
+        "get_user_cluster_by_id",
+        lambda user_id, cluster_id: {
+            "id": cluster_id,
+            "titulo_representativo": "Cluster filtrado",
+            "estado_publicacion": "pendiente",
+            "requiere_revision_editorial": False,
+            "cantidad_noticias": 3,
+            "cantidad_fuentes": 2,
+            "score": 10,
+            "fotos_manuales": [],
+        },
+    )
+    monkeypatch.setattr(
+        panel,
+        "get_cluster_news_for_user",
+        lambda cluster_id, user_id: seen.append((cluster_id, user_id))
+        or [
+            {
+                "id": 1,
+                "fuente": "El Liberal",
+                "titulo": "Noticia suscripta",
+                "url_original": "https://el-liberal.test/1",
+                "url_imagen": None,
+                "fecha_publicacion": None,
+            }
+        ],
+    )
+    monkeypatch.setattr(panel, "_current_user_id", lambda: 5)
+
+    response = panel.app.test_client().get("/cluster/7")
+
+    assert response.status_code == 200
+    assert seen == [(7, 5)]
+    assert "Noticia suscripta".encode("utf-8") in response.data
+    assert "El Liberal".encode("utf-8") in response.data
 
 
 def test_generated_saved_recommendation_shows_quick_publish_controls_only_for_generated(monkeypatch):
@@ -1293,8 +1338,8 @@ def test_editor_jefe_quick_publish_saves_selected_photos_and_redirects_to_cluste
     monkeypatch.setattr(
         panel,
         "_guardar_seleccion_fotos",
-        lambda cluster_id, foto_principal, fotos_secundarias: saved_photo_selections.append(
-            (cluster_id, foto_principal, fotos_secundarias)
+        lambda cluster_id, foto_principal, fotos_secundarias, user_id=None: saved_photo_selections.append(
+            (cluster_id, foto_principal, fotos_secundarias, user_id)
         ),
     )
     monkeypatch.setattr(
@@ -1329,6 +1374,7 @@ def test_editor_jefe_quick_publish_saves_selected_photos_and_redirects_to_cluste
             7,
             "https://img.test/cover.jpg",
             ["https://img.test/secondary-a.jpg", "https://img.test/secondary-b.jpg"],
+            None,
         )
     ]
     assert removed == [(panel.get_connection, 7)]
