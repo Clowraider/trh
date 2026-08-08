@@ -26,7 +26,12 @@ from string import Template
 from datetime import datetime
 from psycopg2.extras import RealDictCursor
 
-from trh.clusters.repository import update_user_cluster_state
+from trh.clusters.repository import (
+    get_cluster_news_for_user,
+    get_or_create_user_cluster_state,
+    save_user_cluster_content,
+    update_user_cluster_state,
+)
 from trh.infrastructure.ai_response_parser import extract_json_object
 from trh.infrastructure.env_loader import load_project_env
 from trh.infrastructure.prompt_loader import load_json_file, load_prompt_text
@@ -177,6 +182,13 @@ def obtener_noticias_cluster(cluster_id):
         conn.close()
 
 
+def obtener_noticias_cluster_para_usuario(cluster_id, user_id):
+    """Return cluster news filtered to the user's subscribed sources."""
+    if user_id is None:
+        return obtener_noticias_cluster(cluster_id)
+    return get_cluster_news_for_user(cluster_id, user_id)
+
+
 # =============================================================================
 # CONSTRUIR EL PROMPT PARA LA IA
 # =============================================================================
@@ -316,6 +328,12 @@ def llamar_ia(prompt):
 
 
 def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=None, user_id=None):
+    if user_id is not None:
+        _set_requiere_revision_editorial_per_user(
+            cluster_id, requiere_revision, nota_editor, user_id
+        )
+        return
+
     conn = get_connection()
     try:
         with conn.cursor() as cur:
@@ -336,12 +354,6 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=N
                 # Keep a generous but bounded size so the textarea remains usable.
                 if len(updated) > 4000:
                     updated = updated[-4000:]
-                if user_id is not None:
-                    update_user_cluster_state(
-                        user_id,
-                        cluster_id,
-                        requiere_revision_editorial=True,
-                    )
                 cur.execute(
                     """
                         UPDATE clusters_editoriales
@@ -353,12 +365,6 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=N
                     (True, updated, cluster_id),
                 )
             else:
-                if user_id is not None:
-                    update_user_cluster_state(
-                        user_id,
-                        cluster_id,
-                        requiere_revision_editorial=bool(requiere_revision),
-                    )
                 cur.execute(
                     """
                         UPDATE clusters_editoriales
@@ -373,41 +379,63 @@ def set_requiere_revision_editorial(cluster_id, requiere_revision, nota_editor=N
         conn.close()
 
 
+def _append_editorial_note(existing, nota_editor):
+    separator = "\n\n---\n\n" if existing.strip() else ""
+    updated = f"{existing}{separator}{nota_editor}".strip()
+    if len(updated) > 4000:
+        updated = updated[-4000:]
+    return updated
+
+
+def _set_requiere_revision_editorial_per_user(cluster_id, requiere_revision, nota_editor, user_id):
+    fields = {"requiere_revision_editorial": bool(requiere_revision)}
+    if requiere_revision and nota_editor:
+        state = get_or_create_user_cluster_state(user_id, cluster_id)
+        updated = _append_editorial_note(state.get("nota_editor") or "", nota_editor)
+        fields["nota_editor"] = updated
+    update_user_cluster_state(user_id, cluster_id, **fields)
+
+
 # =============================================================================
 # GUARDAR EL CONTENIDO GENERADO EN LA DB
 # =============================================================================
 
 def guardar_contenido_ia(cluster_id, contenido, user_id=None):
     """
-    Guarda el contenido generado por la IA en el cluster correspondiente.
+    Guarda el contenido generado por la IA.
 
-    Campos actualizados en clusters_editoriales:
-    - contenido_ia: JSON con {titulo, resumen, articulo, categoria}
-
-    El estado de publicación se escribe en user_cluster_states cuando se provee
-    ``user_id``; de lo contrario se mantiene en clusters_editoriales para
-    compatibilidad con consumidores sin contexto de usuario.
+    Cuando se provee ``user_id`` el contenido se persiste en
+    ``user_cluster_states`` (contenido_ia, titulo_representativo y estado
+    generado). Sin ``user_id`` se conserva el comportamiento legacy de
+    escribir en ``clusters_editoriales`` para compatibilidad con el CLI.
 
     Args:
         cluster_id: ID del cluster en la DB
         contenido: dict con {titulo, resumen, articulo, categoria}
         user_id: ID del usuario que genera el artículo (opcional)
     """
+    if user_id is not None:
+        save_user_cluster_content(
+            user_id,
+            cluster_id,
+            titulo_representativo=contenido.get("titulo"),
+            contenido_ia=contenido,
+        )
+        update_user_cluster_state(
+            user_id,
+            cluster_id,
+            estado_publicacion='generado',
+        )
+        return
+
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            if user_id is not None:
-                update_user_cluster_state(
-                    user_id,
-                    cluster_id,
-                    estado_publicacion='generado',
-                )
-            else:
-                cur.execute("""
-                    UPDATE clusters_editoriales
-                    SET estado_publicacion = 'generado'
-                    WHERE id = %s
-                """, (cluster_id,))
+            cur.execute("""
+                UPDATE clusters_editoriales
+                SET estado_publicacion = 'generado'
+                WHERE id = %s
+            """, (cluster_id,))
             cur.execute("""
                 UPDATE clusters_editoriales
                 SET
@@ -532,11 +560,11 @@ def generar_articulo_para_cluster(cluster_id, nota_ia='', user_id=None):
 
     def _restore_estado_pendiente(nota_editor=None):
         if user_id is not None:
-            update_user_cluster_state(
-                user_id,
-                cluster_id,
-                estado_publicacion='pendiente',
-            )
+            fields = {"estado_publicacion": "pendiente"}
+            if nota_editor is not None:
+                fields["nota_editor"] = nota_editor
+            update_user_cluster_state(user_id, cluster_id, **fields)
+            return
         conn = get_connection()
         try:
             with conn.cursor() as cur:
@@ -547,7 +575,7 @@ def generar_articulo_para_cluster(cluster_id, nota_ia='', user_id=None):
                             actualizado_en = NOW()
                         WHERE id = %s
                     """, (nota_editor, cluster_id))
-                elif user_id is None:
+                else:
                     cur.execute("""
                         UPDATE clusters_editoriales
                         SET estado_publicacion = 'pendiente',
@@ -561,8 +589,8 @@ def generar_articulo_para_cluster(cluster_id, nota_ia='', user_id=None):
     # Marcar como "generando" para que el panel no muestre inconsistencias
     _set_estado_generando()
 
-    # 1. Obtener noticias
-    noticias = obtener_noticias_cluster(cluster_id)
+    # 1. Obtener noticias (filtradas por fuentes suscriptas cuando hay usuario)
+    noticias = obtener_noticias_cluster_para_usuario(cluster_id, user_id)
     logger.info("📰 Noticias encontradas: %s", len(noticias))
 
     if not noticias:
