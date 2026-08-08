@@ -47,6 +47,12 @@ def _state_row(**overrides):
         "descartado_en": None,
         "created_at": datetime(2026, 1, 1),
         "updated_at": datetime(2026, 1, 1),
+        "titulo_representativo": None,
+        "contenido_ia": None,
+        "foto_principal": None,
+        "fotos_secundarias": [],
+        "nota_editor": None,
+        "nota_ia": None,
     }
     defaults.update(overrides)
     return defaults
@@ -256,12 +262,12 @@ def test_get_user_cluster_by_id_returns_cluster_with_state(
     cursor.fetchone.return_value = {
         "id": 7,
         "titulo_representativo": "Cluster visible",
-        "contenido_ia": None,
+        "contenido_ia": '{"titulo": "Per-user title"}',
         "estado": "nuevo",
-        "foto_principal": None,
-        "fotos_secundarias": None,
-        "nota_editor": None,
-        "nota_ia": None,
+        "foto_principal": "https://cdn.test/principal.jpg",
+        "fotos_secundarias": '["https://cdn.test/sec1.jpg"]',
+        "nota_editor": "Nota editor",
+        "nota_ia": "Nota ia",
         "cantidad_noticias": 2,
         "cantidad_fuentes": 1,
         "primera_noticia": None,
@@ -283,4 +289,84 @@ def test_get_user_cluster_by_id_returns_cluster_with_state(
     assert result["estado_publicacion"] == "publicado"
     assert result["url_wp"] == "https://wp.test/7"
     assert result["veces_publicado"] == 3
-    assert result["fotos_secundarias"] == []
+    assert result["fotos_secundarias"] == ["https://cdn.test/sec1.jpg"]
+    assert result["contenido_ia"] == {"titulo": "Per-user title"}
+    assert result["foto_principal"] == "https://cdn.test/principal.jpg"
+    assert result["nota_editor"] == "Nota editor"
+    assert result["nota_ia"] == "Nota ia"
+
+
+def test_get_cluster_news_for_user_returns_subscribed_source_news(mock_connection):
+    _conn, cursor = mock_connection
+    cursor.fetchall.side_effect = [
+        [{"slug": "el-liberal"}, {"slug": "clarin"}],
+        [
+            {
+                "id": 1,
+                "fuente": "El Liberal",
+                "titulo": "Noticia A",
+                "fecha_publicacion": datetime(2026, 1, 3),
+                "fecha_extraccion": datetime(2026, 1, 3, 10, 0, 0),
+            },
+            {
+                "id": 2,
+                "fuente": "Clarin",
+                "titulo": "Noticia B",
+                "fecha_publicacion": datetime(2026, 1, 2),
+                "fecha_extraccion": datetime(2026, 1, 2, 10, 0, 0),
+            },
+        ],
+    ]
+
+    result = repository.get_cluster_news_for_user(7, 2)
+
+    assert len(result) == 2
+    assert result[0]["fuente"] == "El Liberal"
+    assert result[1]["fuente"] == "Clarin"
+    calls = _execute_calls(cursor)
+    news_call = calls[-1]
+    assert "LOWER(fuente) = ANY(%s)" in news_call[0]
+    assert news_call[1] == (7, ["el-liberal", "clarin"])
+
+
+def test_get_cluster_news_for_user_returns_empty_when_no_subscriptions(mock_connection):
+    _conn, cursor = mock_connection
+    cursor.fetchall.return_value = []
+
+    result = repository.get_cluster_news_for_user(7, 2)
+
+    assert result == []
+
+
+def test_save_user_cluster_content_persists_content_fields(mock_connection):
+    _conn, cursor = mock_connection
+
+    repository.save_user_cluster_content(
+        2,
+        7,
+        titulo_representativo="Nuevo título",
+        contenido_ia={"titulo": "A", "resumen": "B"},
+        foto_principal="https://cdn.test/p.jpg",
+        fotos_secundarias=["https://cdn.test/s1.jpg"],
+        nota_editor="Nota",
+        nota_ia="IA note",
+    )
+
+    calls = _execute_calls(cursor)
+    update_call = next(
+        call for call in calls if "INSERT INTO user_cluster_states" in call[0]
+    )
+    sql = update_call[0]
+    params = update_call[1]
+    assert params[:2] == (2, 7)
+    assert "titulo_representativo = %s" in sql
+    assert "contenido_ia = %s" in sql
+    assert "foto_principal = %s" in sql
+    assert "fotos_secundarias = %s" in sql
+    assert "nota_editor = %s" in sql
+    assert "nota_ia = %s" in sql
+    assert "Nuevo título" in params
+    assert '{"titulo": "A", "resumen": "B"}' in params
+    assert "https://cdn.test/p.jpg" in params
+    _conn.commit.assert_called_once()
+    _conn.close.assert_called_once()
