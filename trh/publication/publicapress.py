@@ -160,14 +160,24 @@ def _validar_contenido_publicable(contenido):
         raise ValueError(f"Contenido IA incompleto para publicar. Faltan: {', '.join(faltantes)}")
 
 
-def _guardar_error_publicacion(conn, cluster_id, mensaje):
+def _guardar_error_publicacion(conn, cluster_id, mensaje, user_id=None):
+    nota = f"Error publicación WP: {mensaje[:400]}"
+    if user_id is not None:
+        state = get_or_create_user_cluster_state(user_id, cluster_id)
+        existing = state.get("nota_editor") or ""
+        separator = "\n\n---\n\n" if existing.strip() else ""
+        updated = f"{existing}{separator}{nota}".strip()
+        if len(updated) > 4000:
+            updated = updated[-4000:]
+        update_user_cluster_state(user_id, cluster_id, nota_editor=updated)
+        return
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE clusters_editoriales
             SET nota_editor = %s,
                 actualizado_en = NOW()
             WHERE id = %s
-        """, (f"Error publicación WP: {mensaje[:400]}", cluster_id))
+        """, (nota, cluster_id))
     conn.commit()
 
 
@@ -637,13 +647,79 @@ def publicar_en_wordpress(titulo, resumen, contenido, config, categoria_id=None,
 # FUNCIÓN PRINCIPAL: PUBLICAR UN CLUSTER
 # =============================================================================
 
+def _normalizar_fotos_secundarias_publicapress(raw):
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [u for u in raw if isinstance(u, str) and u.strip()]
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [u for u in parsed if isinstance(u, str) and u.strip()]
+        except (json.JSONDecodeError, TypeError):
+            return []
+    return []
+
+
+def _load_publishable_content(cluster_id, user_id=None):
+    """Return content, photos and publication state for a cluster.
+
+    When ``user_id`` is provided the data comes from ``user_cluster_states``;
+    otherwise it falls back to the legacy global ``clusters_editoriales`` row.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    id,
+                    titulo_representativo,
+                    contenido_ia,
+                    estado_publicacion,
+                    foto_principal,
+                    fotos_secundarias
+                FROM clusters_editoriales
+                WHERE id = %s
+            """, (cluster_id,))
+            cluster = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not cluster:
+        return None
+
+    if user_id is not None:
+        state = get_or_create_user_cluster_state(user_id, cluster_id)
+        contenido_ia = state.get("contenido_ia")
+        foto_principal = state.get("foto_principal")
+        fotos_secundarias = _normalizar_fotos_secundarias_publicapress(
+            state.get("fotos_secundarias")
+        )
+        estado_publicacion = state.get("estado_publicacion") or "pendiente"
+    else:
+        contenido_ia = cluster.get("contenido_ia")
+        foto_principal = cluster.get("foto_principal")
+        fotos_secundarias = _normalizar_fotos_secundarias_publicapress(
+            cluster.get("fotos_secundarias")
+        )
+        estado_publicacion = cluster.get("estado_publicacion") or "pendiente"
+
+    return {
+        "contenido_ia": contenido_ia,
+        "foto_principal": foto_principal,
+        "fotos_secundarias": fotos_secundarias,
+        "estado_publicacion": estado_publicacion,
+    }
+
+
 def publicar_cluster(cluster_id, user_id=None):
     """
     Publica un cluster en WordPress.
 
     Flujo:
       1. Obtener la configuración de WordPress del usuario
-      2. Obtener el cluster de la DB (debe tener contenido_ia)
+      2. Obtener el contenido y fotos del cluster (per-user cuando aplica)
       3. Parsear el JSON con título, resumen, artículo, categoría
       4. Buscar o crear la categoría en WordPress
       5. Publicar en WP
@@ -662,118 +738,94 @@ def publicar_cluster(cluster_id, user_id=None):
 
     config = _config_or_raise(user_id)
 
+    content = _load_publishable_content(cluster_id, user_id)
+    if content is None:
+        return {"ok": False, "mensaje": f"Cluster {cluster_id} no encontrado"}
+
+    if not content.get("contenido_ia"):
+        return {
+            "ok": False,
+            "mensaje": "El cluster no tiene contenido generado por IA. Generalo primero."
+        }
+
+    if content["estado_publicacion"] == "publicado":
+        return {
+            "ok": False,
+            "mensaje": "Este cluster ya fue publicado."
+        }
+
+    # Parsear el contenido IA (puede venir como dict o como string JSON)
+    try:
+        contenido = content["contenido_ia"]
+        if isinstance(contenido, str):
+            contenido = json.loads(contenido)
+    except (json.JSONDecodeError, TypeError) as e:
+        return {
+            "ok": False,
+            "mensaje": f"Error parseando contenido_ia: {e}"
+        }
+
+    _validar_contenido_publicable(contenido)
+
+    titulo = contenido.get("titulo", "Sin título")
+    resumen = contenido.get("resumen", "")
+    articulo = contenido.get("articulo", "")
+    categoria_nombre = contenido.get("categoria", "")
+    foto_principal = content.get("foto_principal")
+    fotos_secundarias = content.get("fotos_secundarias")[:2]
+
+    print(f"📋 Artículo a publicar:")
+    print(f"   Título: {titulo}")
+    print(f"   Categoría: {categoria_nombre}")
+    print(f"   Resumen: {resumen[:80]}...")
+    print(f"   Foto principal: {foto_principal or 'Sin foto'}")
+    print(f"   Fotos secundarias: {len(fotos_secundarias)}")
+
+    # 1. Obtener o crear categoría en WordPress
+    cat_id = obtener_o_crear_categoria(categoria_nombre, config)
+
+    # 2. Subir imagen destacada si hay foto seleccionada
+    featured_media_id = None
+    if foto_principal:
+        exito_img, featured_media_id, _featured_url = subir_imagen_a_wordpress(foto_principal, config)
+        if not exito_img:
+            # La imagen falló pero seguimos con la publicación
+            print("   ⚠️  Continuando sin imagen destacada")
+            featured_media_id = None
+
+    fotos_secundarias_subidas = []
+    for foto in fotos_secundarias:
+        exito_sec, _sec_id, sec_url = subir_imagen_a_wordpress(foto, config)
+        if exito_sec and sec_url:
+            fotos_secundarias_subidas.append(sec_url)
+
+    articulo_final = _insertar_fotos_entre_parrafos(articulo, fotos_secundarias_subidas)
+
+    # 3. Publicar en WordPress (con imagen asociada si hay)
+    print("   Publicando en WordPress...")
+    exito, url_wp = publicar_en_wordpress(
+        titulo, resumen, articulo_final, config, cat_id, featured_media_id
+    )
+
     conn = get_connection()
     try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT
-                    id,
-                    titulo_representativo,
-                    contenido_ia,
-                    estado_publicacion,
-                    foto_principal,
-                    fotos_secundarias
-                FROM clusters_editoriales
-                WHERE id = %s
-            """, (cluster_id,))
-            cluster = cur.fetchone()
-
-        if not cluster:
-            return {"ok": False, "mensaje": f"Cluster {cluster_id} no encontrado"}
-
-        if not cluster.get('contenido_ia'):
-            return {
-                "ok": False,
-                "mensaje": "El cluster no tiene contenido generado por IA. Generalo primero."
-            }
-
-        if user_id is not None:
-            user_state = get_or_create_user_cluster_state(user_id, cluster_id)
-            estado_publicacion = user_state.get('estado_publicacion') or 'pendiente'
-        else:
-            estado_publicacion = cluster.get('estado_publicacion') or 'pendiente'
-
-        if estado_publicacion == 'publicado':
-            return {
-                "ok": False,
-                "mensaje": "Este cluster ya fue publicado."
-            }
-
-        # Parsear el contenido IA (es un JSON guardado como texto en la DB)
-        try:
-            contenido = cluster['contenido_ia']
-            # Puede venir como dict directo o como string JSON
-            if isinstance(contenido, str):
-                contenido = json.loads(contenido)
-        except (json.JSONDecodeError, TypeError) as e:
-            return {
-                "ok": False,
-                "mensaje": f"Error parseando contenido_ia: {e}"
-            }
-
-        _validar_contenido_publicable(contenido)
-
-        titulo = contenido.get('titulo', 'Sin título')
-        resumen = contenido.get('resumen', '')
-        articulo = contenido.get('articulo', '')
-        categoria_nombre = contenido.get('categoria', '')
-        foto_principal = cluster.get('foto_principal')
-        fotos_secundarias = cluster.get('fotos_secundarias') or []
-        if isinstance(fotos_secundarias, str):
-            try:
-                fotos_secundarias = json.loads(fotos_secundarias)
-            except (json.JSONDecodeError, TypeError):
-                fotos_secundarias = []
-        fotos_secundarias = [u for u in fotos_secundarias if isinstance(u, str) and u.strip()][:2]
-
-        print(f"📋 Artículo a publicar:")
-        print(f"   Título: {titulo}")
-        print(f"   Categoría: {categoria_nombre}")
-        print(f"   Resumen: {resumen[:80]}...")
-        print(f"   Foto principal: {foto_principal or 'Sin foto'}")
-        print(f"   Fotos secundarias: {len(fotos_secundarias)}")
-
-        # 1. Obtener o crear categoría en WordPress
-        cat_id = obtener_o_crear_categoria(categoria_nombre, config)
-
-        # 2. Subir imagen destacada si hay foto seleccionada
-        featured_media_id = None
-        if foto_principal:
-            exito_img, featured_media_id, _featured_url = subir_imagen_a_wordpress(foto_principal, config)
-            if not exito_img:
-                # La imagen falló pero seguimos con la publicación
-                print("   ⚠️  Continuando sin imagen destacada")
-                featured_media_id = None
-
-        fotos_secundarias_subidas = []
-        for foto in fotos_secundarias:
-            exito_sec, _sec_id, sec_url = subir_imagen_a_wordpress(foto, config)
-            if exito_sec and sec_url:
-                fotos_secundarias_subidas.append(sec_url)
-
-        articulo_final = _insertar_fotos_entre_parrafos(articulo, fotos_secundarias_subidas)
-
-        # 3. Publicar en WordPress (con imagen asociada si hay)
-        print("   Publicando en WordPress...")
-        exito, url_wp = publicar_en_wordpress(
-            titulo, resumen, articulo_final, config, cat_id, featured_media_id
-        )
-
         if not exito or not url_wp:
-            _guardar_error_publicacion(conn, cluster_id, "Falló la publicación en WordPress")
+            _guardar_error_publicacion(
+                conn, cluster_id, "Falló la publicación en WordPress", user_id=user_id
+            )
             return {
                 "ok": False,
                 "mensaje": "Falló la publicación en WordPress. Revisar logs."
             }
 
-        # 3. Actualizar la DB con la URL de WP y marcar como publicado
+        # 4. Actualizar la DB con la URL de WP y marcar como publicado
         if user_id is not None:
             user_state = get_or_create_user_cluster_state(user_id, cluster_id)
-            veces_publicado = int(user_state.get('veces_publicado') or 0) + 1
+            veces_publicado = int(user_state.get("veces_publicado") or 0) + 1
             update_user_cluster_state(
                 user_id,
                 cluster_id,
-                estado_publicacion='publicado',
+                estado_publicacion="publicado",
                 url_wp=url_wp,
                 veces_publicado=veces_publicado,
                 ultima_publicacion=datetime.now(),
@@ -801,7 +853,7 @@ def publicar_cluster(cluster_id, user_id=None):
     except Exception as e:
         conn.rollback()
         try:
-            _guardar_error_publicacion(conn, cluster_id, str(e))
+            _guardar_error_publicacion(conn, cluster_id, str(e), user_id=user_id)
         except Exception:
             pass
         logger.error("❌ Error general publicando cluster %s: %s", cluster_id, e)
